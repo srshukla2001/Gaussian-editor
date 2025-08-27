@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Gaussian + GLB Transform Editor</title>
+<style>
+  body { margin:0; overflow:hidden; background:black; font-family:sans-serif; }
+  #ui {
+    position:absolute; top:10px; left:10px; z-index:10;
+    background: rgba(0,0,0,0.7); padding:10px; border-radius:8px; color:white;
+  }
+  #ui label { display:block; margin:5px 0; font-size:12px; }
+  #ui select, #ui input[type=range] { width:120px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <strong>Transform Controls</strong>
+  <label>Mode:
+    <select id="mode">
+      <option value="translate">Translate</option>
+      <option value="rotate">Rotate</option>
+      <option value="scale">Scale</option>
+    </select>
+  </label>
+  <label>Snap: <input type="range" id="snap" min="0" max="1" step="0.01" value="0"></label>
+  <label>Light Intensity: <input type="range" id="light" min="0" max="5" step="0.1" value="1"></label>
+</div>
+
+<script type="module">
+import * as THREE from "https://esm.sh/three@0.170.0";
+import { OrbitControls } from "https://esm.sh/three@0.170.0/examples/jsm/controls/OrbitControls.js";
+import { TransformControls } from "https://esm.sh/three@0.170.0/examples/jsm/controls/TransformControls.js";
+import { GLTFLoader } from "https://esm.sh/three@0.170.0/examples/jsm/loaders/GLTFLoader.js";
+import * as GaussianSplats3D from "https://esm.sh/@mkkellogg/gaussian-splats-3d";
+
+// --- Scene, Camera, Renderer ---
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight,0.1,1000);
+camera.position.set(0,2,5);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.update();
+
+// --- Lighting ---
+const dirLight = new THREE.DirectionalLight(0xffffff,1);
+dirLight.position.set(5,5,5);
+scene.add(dirLight);
+scene.add(new THREE.AmbientLight(0xffffff,0.3));
+
+// --- Gaussian Splat Viewer ---
+const viewer = new GaussianSplats3D.Viewer({threeScene: scene, useBuiltInControls:false, cameraUp:[0,-1,-0.54]});
+viewer.addSplatScene('assets/data/garden/garden.ksplat', {progressiveLoad:false}).then(()=>viewer.start());
+
+// --- Load GLB ---
+let model = null;
+const loader = new GLTFLoader();
+loader.load('assets/father.glb', gltf => {
+  model = gltf.scene;
+  const box = new THREE.Box3().setFromObject(model);
+  const center = box.getCenter(new THREE.Vector3());
+  model.position.sub(center);
+  scene.add(model);
+
+  // --- Transform Controls ---
+  const transform = new TransformControls(camera, renderer.domElement);
+  transform.attach(model);
+  scene.add(transform);
+
+  // Disable orbit while transforming
+  transform.addEventListener('dragging-changed', e => orbit.enabled = !e.value);
+
+  // UI connections
+  const modeEl = document.getElementById('mode');
+  const snapEl = document.getElementById('snap');
+  const lightEl = document.getElementById('light');
+
+  modeEl.addEventListener('change', ()=>transform.setMode(modeEl.value));
+  snapEl.addEventListener('input', ()=>transform.setTranslationSnap(parseFloat(snapEl.value)||null));
+  lightEl.addEventListener('input', ()=>dirLight.intensity = parseFloat(lightEl.value));
+});
+
+// --- Resize ---
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// --- Animate ---
+function animate(){
+  requestAnimationFrame(animate);
+  viewer.renderer.render(scene, viewer.camera);
+}
+animate();
+
+</script>
+</body>
+</html>
