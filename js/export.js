@@ -1,6 +1,5 @@
 // export.js
 export function exportScene(splatPath, models) {
-  // Prepare scene.json
   const sceneData = {
     splatPath,
     models: models.map(m => {
@@ -8,8 +7,8 @@ export function exportScene(splatPath, models) {
       return {
         name: m.name,
         color: o.material?.color ? o.material.color.getHexString() : null,
-        wireframe: o.material?.wireframe || false,   // <-- store wireframe
-        geometryType: o.geometry?.type || 'BoxGeometry', // <-- store geometry type
+        wireframe: o.material?.wireframe || false,
+        geometryType: o.geometry?.type || 'BoxGeometry',
         position: o.position.toArray(),
         rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
         scale: o.scale.x
@@ -17,7 +16,6 @@ export function exportScene(splatPath, models) {
     })
   };
 
-  // --- index.html ---
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -40,32 +38,34 @@ export function exportScene(splatPath, models) {
 </body>
 </html>`;
 
-  // --- main.js ---
   const js = `
 import * as GaussianSplats3D from '/lib/gaussian-splats-3d.module.js';
 import * as THREE from '/lib/three.module.js';
 import { GLTFLoader } from '/lib/GLTFLoader.js';
 
 const loader = new GLTFLoader();
+const mixers = [];
+const clock = new THREE.Clock();
 
 fetch('scene.json')
   .then(res => res.json())
   .then(data => {
     const viewer = new GaussianSplats3D.Viewer({
-      cameraUp: [0.01933, -0.7583, -0.65161],
-      initialCameraPosition: [1.5, 2.6, -6.3],
-      initialCameraLookAt: [0.45, 1.95, 1.5]
+      cameraUp: [0, -1, 0],
+      initialCameraPosition: [1.54163, 2.68515, -6.37228],
+      initialCameraLookAt: [0.45622, 1.95338, 1.51278],
+      sphericalHarmonicsDegree: 2
     });
 
-    viewer.addSplatScene(data.splatPath, { progressiveLoad: false }).then(() => {
+    viewer.addSplatScene(data.splatPath, { progressiveLoad: true }).then(() => {
       viewer.start();
       const scene = viewer.threeScene;
 
-      // Lighting
-      scene.add(new THREE.AmbientLight(0x404040, 1.5));
-      const dir = new THREE.DirectionalLight(0xffffff, 1);
-      dir.position.set(5,10,7);
-      scene.add(dir);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+      dirLight.position.set(5, 10, 7);
+      dirLight.castShadow = true;
+      scene.add(dirLight);
 
       data.models.forEach(model => {
         if(model.name.toLowerCase().endsWith('.glb')) {
@@ -75,7 +75,22 @@ fetch('scene.json')
             if(model.position) obj.position.fromArray(model.position);
             if(model.rotation) obj.rotation.set(...model.rotation);
             if(model.scale) obj.scale.setScalar(model.scale);
+            
+            obj.traverse(c => {
+              if (c.isMesh) {
+                c.castShadow = c.receiveShadow = true;
+              }
+            });
+            
             scene.add(obj);
+
+            if (gltf.animations && gltf.animations.length > 0) {
+              const mixer = new THREE.AnimationMixer(obj);
+              gltf.animations.forEach(clip => {
+                mixer.clipAction(clip).play();
+              });
+              mixers.push(mixer);
+            }
           });
         } else {
           let geometry;
@@ -99,6 +114,11 @@ fetch('scene.json')
           scene.add(obj);
         }
       });
+
+      scene.onBeforeRender = () => {
+        const delta = clock.getDelta();
+        mixers.forEach(m => m.update(delta));
+      };
     });
   })
   .catch(err => console.error('Failed to load scene.json', err));
@@ -106,7 +126,7 @@ fetch('scene.json')
 
   const json = JSON.stringify(sceneData, null, 2);
 
-  function downloadFile(filename, content, type='text/plain') {
+  function downloadFile(filename, content, type = 'text/plain') {
     const blob = new Blob([content], { type });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -115,14 +135,12 @@ fetch('scene.json')
     URL.revokeObjectURL(a.href);
   }
 
-  // Save files
   downloadFile('index.html', html, 'text/html');
   downloadFile('main.js', js, 'text/javascript');
   downloadFile('scene.json', json, 'application/json');
 
-  // Download GLB assets
   models.forEach(m => {
-    if(m.name.toLowerCase().endsWith('.glb') && m.fileUrl) {
+    if (m.name.toLowerCase().endsWith('.glb') && m.fileUrl) {
       fetch(m.fileUrl)
         .then(res => res.blob())
         .then(blob => downloadFile('assets/' + m.name, blob, 'model/gltf-binary'));
