@@ -5,14 +5,29 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
 import { exportScene } from './export.js';
 import { createGUI } from './gui.js';
 
+const camera = new THREE.PerspectiveCamera(
+  65,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  1000
+);
+camera.position.fromArray([1.54163, 2.68515, -6.37228]);
+camera.up.fromArray([0, -1, 0]);
+camera.lookAt(new THREE.Vector3(0.45622, 1.95338, 1.51278));
+
+const renderDim = new THREE.Vector2();
+const tmpVec3 = new THREE.Vector3();
+const tmpProj = new THREE.Vector3();
+let canvasEl = null;
 const viewer = new GaussianSplats3D.Viewer({
+  camera,
   cameraUp: [0, -1, 0],
   initialCameraPosition: [1.54163, 2.68515, -6.37228],
   initialCameraLookAt: [0.45622, 1.95338, 1.51278],
   sphericalHarmonicsDegree: 2
 });
 
-const splatPath = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/SignatureGlobal/TwinTowerDXP/gs_gssplat.ply';
+const splatPath = '../assets/data/bonsai/bonsai.ksplat';
 const loader = new GLTFLoader();
 const models = [];
 const mixers = [];
@@ -87,12 +102,21 @@ styleTag.innerHTML = `
     box-shadow: 0 6px 20px rgba(0,0,0,0.6);
     transform: translate(-50%, -100%);
     z-index: 60;
-    display: none;
     min-width: 180px;
   }
   .hp-tooltip h4 { margin:0 0 6px 0; font-size:13px; }
   .hp-tooltip p { margin:0 0 8px 0; font-size:12px; color:var(--muted); }
   .hp-tooltip button { border-radius:6px; padding:6px 8px; border: none; cursor:pointer; background: var(--accent); color:#052018; font-weight:600; }
+  .tooltip-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .tooltip-toggle input[type="checkbox"] {
+    margin: 0;
+  }
 `;
 document.head.appendChild(styleTag);
 
@@ -152,6 +176,8 @@ tooltip.className = 'hp-tooltip';
 tooltip.innerHTML = `<h4 id="tipTitle">Title</h4><p id="tipDesc">desc</p><button id="tipBtn">Action</button>`;
 document.body.appendChild(tooltip);
 
+const tooltips = new Map();
+
 function createModelItem(m, index) {
   const item = document.createElement('div');
   item.className = 'model-item';
@@ -173,6 +199,21 @@ function createModelItem(m, index) {
 
   const actions = document.createElement('div');
   actions.className = 'actions';
+  
+  const tooltipToggle = document.createElement('div');
+  tooltipToggle.className = 'tooltip-toggle';
+  const toggleCheckbox = document.createElement('input');
+  toggleCheckbox.type = 'checkbox';
+  toggleCheckbox.checked = m.showTooltip !== false;
+  toggleCheckbox.addEventListener('change', (e) => {
+    m.showTooltip = e.target.checked;
+    updateTooltipVisibility(m.object, m.showTooltip);
+  });
+  const toggleLabel = document.createElement('span');
+  toggleLabel.textContent = 'Tooltip';
+  tooltipToggle.appendChild(toggleCheckbox);
+  tooltipToggle.appendChild(toggleLabel);
+
   const selectBtn = document.createElement('button');
   selectBtn.className = 'small-btn';
   selectBtn.textContent = 'Select';
@@ -188,6 +229,7 @@ function createModelItem(m, index) {
     e.stopPropagation();
     try {
       viewer.threeScene.remove(m.object);
+      removeTooltip(m.object);
     } catch (err) { }
     const idx = models.indexOf(m);
     if (idx >= 0) models.splice(idx, 1);
@@ -199,6 +241,7 @@ function createModelItem(m, index) {
     }
   });
 
+  actions.appendChild(tooltipToggle);
   actions.appendChild(selectBtn);
   actions.appendChild(removeBtn);
 
@@ -244,86 +287,72 @@ function updateSelectedInfo() {
   `;
 }
 
-function handlePointerClick(event) {
-  if (!viewer || !viewer.threeCamera) return;
-
-  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-  raycaster.setFromCamera(mouse, viewer.threeCamera);
-
-  const objects = [];
-  models.forEach(m => {
-    if (m.object) {
-      if (m.object.isGroup || m.object.type === 'Group') {
-        m.object.traverse(c => { if (c.isMesh) objects.push(c); });
-      } else {
-        objects.push(m.object);
-      }
-    }
+function createTooltipForModel(model) {
+  const tooltip = document.createElement('div');
+  tooltip.className = 'hp-tooltip';
+  tooltip.innerHTML = `<h4>${model.name || model.type}</h4><p>Selectable object</p><button>Select</button>`;
+  tooltip.style.display = 'block';
+  document.body.appendChild(tooltip);
+  
+  tooltip.querySelector('button').addEventListener('click', () => {
+    selectModel(model);
   });
+  
+  return tooltip;
+}
 
-  const intersects = raycaster.intersectObjects(objects, true);
-  if (intersects.length > 0) {
-    const hit = intersects[0].object;
-    let top = null;
-    for (const m of models) {
-      if (m.object === hit || m.object.uuid === hit.uuid) { top = m.object; break; }
-      if (m.object.traverse) {
-        let found = false;
-        m.object.traverse(c => { if (c.uuid === hit.uuid) found = true; });
-        if (found) { top = m.object; break; }
-      }
-    }
-    if (!top) top = hit;
-
-    if (hit.material?.wireframe) {
-      try {
-        const oldColor = hit.material.color ? hit.material.color.getHex() : 0x00ff00;
-        hit.material = new THREE.MeshStandardMaterial({
-          color: oldColor,
-          transparent: true,
-          opacity: 0.3,
-          wireframe: false
-        });
-      } catch (e) { }
-    }
-
-    tooltip.style.display = 'block';
-    tooltip.querySelector('#tipTitle').innerText = top.name || top.type;
-    tooltip.querySelector('#tipDesc').innerText = 'Selectable object';
-    tooltip.querySelector('#tipBtn').onclick = () => {
-      alert('Button clicked on ' + (top.name || top.type));
-    };
-
-    selectedModel = top;
-    updateSelectedInfo();
-    if (gui) { try { gui.destroy(); } catch (e) { } }
-    gui = createGUI(selectedModel);
-  } else {
-    tooltip.style.display = 'none';
+function removeTooltip(model) {
+  if (tooltips.has(model)) {
+    const tooltip = tooltips.get(model);
+    try {
+      document.body.removeChild(tooltip);
+    } catch (e) {}
+    tooltips.delete(model);
   }
 }
 
-window.removeEventListener('click', handlePointerClick);
-window.addEventListener('click', handlePointerClick);
-
-if (viewer && viewer.threeScene) {
-  const clock = new THREE.Clock();
-
-  viewer.threeScene.onBeforeRender = () => {
-    const delta = clock.getDelta();
-    mixers.forEach(m => m.update(delta));
-
-    if (selectedModel && viewer.threeCamera) {
-      const pos = (selectedModel.position?.clone ? selectedModel.position.clone() : new THREE.Vector3());
-      pos.project(viewer.threeCamera);
-      const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
-      const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;
-      tooltip.style.transform = `translate(-50%, -100%) translate(${x}px,${y}px)`;
-    }
-  };
+function updateTooltipVisibility(model, visible) {
+  if (tooltips.has(model)) {
+    const tooltip = tooltips.get(model);
+    tooltip.style.display = visible ? 'block' : 'none';
+  }
 }
+
+function updateTooltipPosition(tooltip, worldPos) {
+  try {
+    const cam = viewer.camera || viewer.threeCamera || camera;
+    tmpProj.copy(worldPos).project(cam);
+    const x = (tmpProj.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-tmpProj.y * 0.5 + 0.5) * window.innerHeight;
+    tooltip.style.transform = `translate(-50%, -100%) translate(${x}px,${y}px)`;
+  } catch (e) {}
+}
+
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
+  mixers.forEach(m => m.update(delta));
+
+  models.forEach(m => {
+    try {
+      const anchor = new THREE.Vector3();
+      m.object.getWorldPosition(anchor);
+      
+      if (!tooltips.has(m.object)) {
+        const tooltip = createTooltipForModel(m.object);
+        tooltips.set(m.object, tooltip);
+        updateTooltipVisibility(m.object, m.showTooltip !== false);
+      }
+      
+      if (m.showTooltip !== false) {
+        const tooltip = tooltips.get(m.object);
+        updateTooltipPosition(tooltip, anchor);
+      }
+    } catch (e) {}
+  });
+}
+animate();
 
 document.getElementById('addSelectableBtn').addEventListener('click', () => {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -336,7 +365,7 @@ document.getElementById('addSelectableBtn').addEventListener('click', () => {
   cube.position.set(0, 0.5, 0);
 
   viewer.threeScene.add(cube);
-  models.push({ name: cube.name, object: cube });
+  models.push({ name: cube.name, object: cube, showTooltip: true });
   refreshSidebarList();
   selectModel(cube);
 });
@@ -352,7 +381,7 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
     obj.position.set(0, 0, 0);
     obj.rotation.set(0, 0, 0);
     obj.scale.set(1, 1, 1);
-    
+
     obj.traverse(c => {
       if (c.isMesh) {
         c.castShadow = c.receiveShadow = true;
@@ -360,7 +389,7 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
     });
 
     viewer.threeScene.add(obj);
-    models.push({ name: file.name, object: obj });
+    models.push({ name: file.name, object: obj, showTooltip: true });
     refreshSidebarList();
     selectModel(obj);
 
@@ -393,28 +422,38 @@ document.getElementById('centerCameraBtn').addEventListener('click', () => {
 
 document.getElementById('resetSceneBtn').addEventListener('click', () => {
   models.forEach(m => {
-    try { viewer.threeScene.remove(m.object); } catch (e) { }
+    try { 
+      viewer.threeScene.remove(m.object);
+      removeTooltip(m.object);
+    } catch (e) { }
   });
   models.length = 0;
   selectedModel = null;
   updateSelectedInfo();
   refreshSidebarList();
   if (gui) { try { gui.destroy(); } catch (e) { } gui = null; }
-  
+
   const box = new THREE.Mesh(
     new THREE.BoxGeometry(1, 1, 1),
     new THREE.MeshStandardMaterial({ color: 0xffff00 })
   );
   box.name = 'Box';
   viewer.threeScene.add(box);
-  models.push({ name: 'Box', object: box });
+  models.push({ name: 'Box', object: box, showTooltip: true });
   refreshSidebarList();
 });
 
 viewer.addSplatScene(splatPath, { progressiveLoad: true }).then(() => {
   viewer.start();
+
+  requestAnimationFrame(() => {
+    canvasEl = (viewer.renderer && viewer.renderer.domElement) || document.querySelector('canvas');
+    if (canvasEl) {
+      canvasEl.style.touchAction = 'none';
+    }
+    animate();
+  });
   const scene = viewer.threeScene;
-  const camera = viewer.threeCamera;
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.85));
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -428,7 +467,7 @@ viewer.addSplatScene(splatPath, { progressiveLoad: true }).then(() => {
   );
   box.name = 'Box';
   scene.add(box);
-  models.push({ name: 'Box', object: box });
+  models.push({ name: 'Box', object: box, showTooltip: true });
 
   gui = createGUI(box);
   selectedModel = box;
@@ -436,13 +475,15 @@ viewer.addSplatScene(splatPath, { progressiveLoad: true }).then(() => {
   refreshSidebarList();
 
   window.addEventListener('resize', () => {
-    if (selectedModel && viewer.threeCamera) {
-      const pos = (selectedModel.position?.clone ? selectedModel.position.clone() : new THREE.Vector3());
-      pos.project(viewer.threeCamera);
-      const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
-      const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;
-      tooltip.style.transform = `translate(-50%, -100%) translate(${x}px,${y}px)`;
-    }
+    models.forEach(m => {
+      try {
+        if (tooltips.has(m.object) && m.showTooltip !== false) {
+          const anchor = new THREE.Vector3();
+          m.object.getWorldPosition(anchor);
+          updateTooltipPosition(tooltips.get(m.object), anchor);
+        }
+      } catch (e) {}
+    });
   });
 
 }).catch(err => {
