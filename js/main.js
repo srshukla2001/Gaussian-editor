@@ -1,9 +1,12 @@
 import * as GaussianSplats3D from '../lib/gaussian-splats-3d.module.js';
-import * as THREE from '../lib/three.module.js';
-import { GLTFLoader } from '/lib/GLTFLoader.js';
-import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import GUI from 'lil-gui';
 import { exportScene } from './export.js';
 import { createGUI } from './gui.js';
+
+// Make THREE available globally for GaussianSplats3D
+window.THREE = THREE;
 
 const camera = new THREE.PerspectiveCamera(
   65,
@@ -20,7 +23,7 @@ const tmpVec3 = new THREE.Vector3();
 const tmpProj = new THREE.Vector3();
 let canvasEl = null;
 const viewer = new GaussianSplats3D.Viewer({
-  camera,
+  camera: camera,
   cameraUp: [0, -1, 0],
   initialCameraPosition: [1.54163, 2.68515, -6.37228],
   initialCameraLookAt: [0.45622, 1.95338, 1.51278],
@@ -33,6 +36,12 @@ const models = [];
 const mixers = [];
 let selectedModel = null;
 let gui = null;
+
+// Transform gizmo variables
+let transformGizmo = null;
+let isDragging = false;
+let dragStartPoint = new THREE.Vector3();
+let selectedAxis = null;
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -117,6 +126,32 @@ styleTag.innerHTML = `
   .tooltip-toggle input[type="checkbox"] {
     margin: 0;
   }
+  .transform-controls {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    background: var(--panel);
+    padding: 10px;
+    border-radius: 8px;
+    z-index: 40;
+  }
+  .transform-btn {
+    background: var(--glass);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .transform-btn.active {
+    background: var(--accent);
+    color: #052018;
+    font-weight: 600;
+  }
 `;
 document.head.appendChild(styleTag);
 
@@ -139,7 +174,7 @@ sidebar.innerHTML = `
       </div>
     </div>
     <div style="margin-top:8px; font-size:12px; color:var(--muted);">
-      Click objects to select. Dragging is available via gizmo (if added).
+      Click objects to select. Dragging is available via gizmo.
     </div>
   </div>
 
@@ -159,7 +194,7 @@ sidebar.innerHTML = `
     <div style="margin-top:8px; font-size:12px; color:var(--muted);">Supported: .glb</div>
   </div>
 
-  <div class="hp-section">
+  <div class='hp-section'>
     <div style="font-weight:600">Selected</div>
     <div id="selectedInfo" style="margin-top:8px; font-size:13px; color:var(--muted)">None</div>
   </div>
@@ -177,6 +212,136 @@ tooltip.innerHTML = `<h4 id="tipTitle">Title</h4><p id="tipDesc">desc</p><button
 document.body.appendChild(tooltip);
 
 const tooltips = new Map();
+
+// Transform Gizmo Functions
+function createTransformGizmo() {
+  const gizmo = new THREE.Group();
+  
+  const axes = [
+    { color: 0xff0000, direction: new THREE.Vector3(1, 0, 0), name: 'x' },
+    { color: 0x00ff00, direction: new THREE.Vector3(0, 1, 0), name: 'y' },
+    { color: 0x0000ff, direction: new THREE.Vector3(0, 0, 1), name: 'z' }
+  ];
+  
+  axes.forEach(axis => {
+    // Arrow
+    const arrow = new THREE.ArrowHelper(
+      axis.direction,
+      new THREE.Vector3(0, 0, 0),
+      1,
+      axis.color,
+      0.3,
+      0.2
+    );
+    arrow.userData.axis = axis.name;
+    gizmo.add(arrow);
+    
+    // Handle (invisible cylinder for picking)
+    const handleGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.8, 8);
+    const handleMaterial = new THREE.MeshBasicMaterial({ 
+      color: axis.color,
+      transparent: true,
+      opacity: 0.5,
+      visible: false
+    });
+    const handle = new THREE.Mesh(handleGeometry, handleMaterial);
+    handle.position.copy(axis.direction.clone().multiplyScalar(0.4));
+    handle.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      axis.direction.clone().normalize()
+    );
+    handle.userData.axis = axis.name;
+    handle.userData.isHandle = true;
+    gizmo.add(handle);
+  });
+  
+  return gizmo;
+}
+
+function setupTransformGizmo() {
+  transformGizmo = createTransformGizmo();
+  viewer.threeScene.add(transformGizmo);
+  transformGizmo.visible = false;
+  
+  if (viewer.renderer && viewer.renderer.domElement) {
+    viewer.renderer.domElement.addEventListener('mousedown', onMouseDown);
+    viewer.renderer.domElement.addEventListener('mousemove', onMouseMove);
+    viewer.renderer.domElement.addEventListener('mouseup', onMouseUp);
+  }
+}
+
+function onMouseDown(event) {
+  if (!selectedModel || !transformGizmo.visible) return;
+  
+  const mouse = new THREE.Vector2();
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, viewer.camera);
+  
+  const intersects = raycaster.intersectObjects(transformGizmo.children, true);
+  
+  for (const intersect of intersects) {
+    if (intersect.object.userData.isHandle) {
+      selectedAxis = intersect.object.userData.axis;
+      isDragging = true;
+      dragStartPoint.copy(intersect.point);
+      if (viewer.controls) {
+        viewer.controls.enabled = false;
+      }
+      break;
+    }
+  }
+}
+
+function onMouseMove(event) {
+  if (!isDragging || !selectedModel || !selectedAxis) return;
+  
+  const mouse = new THREE.Vector2();
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, viewer.camera);
+  
+  const plane = new THREE.Plane();
+  const axisVector = new THREE.Vector3();
+  
+  switch (selectedAxis) {
+    case 'x': axisVector.set(1, 0, 0); break;
+    case 'y': axisVector.set(0, 1, 0); break;
+    case 'z': axisVector.set(0, 0, 1); break;
+  }
+  
+  const cameraDirection = new THREE.Vector3();
+  viewer.camera.getWorldDirection(cameraDirection);
+  const cross = new THREE.Vector3().crossVectors(axisVector, cameraDirection);
+  plane.setFromNormalAndCoplanarPoint(cross, dragStartPoint);
+  
+  const intersection = new THREE.Vector3();
+  raycaster.ray.intersectPlane(plane, intersection);
+  
+  const delta = new THREE.Vector3().subVectors(intersection, dragStartPoint);
+  
+  switch (selectedAxis) {
+    case 'x': selectedModel.position.x += delta.x; break;
+    case 'y': selectedModel.position.y += delta.y; break;
+    case 'z': selectedModel.position.z += delta.z; break;
+  }
+  
+  dragStartPoint.copy(intersection);
+  transformGizmo.position.copy(selectedModel.position);
+  updateSelectedInfo();
+}
+
+function onMouseUp() {
+  isDragging = false;
+  selectedAxis = null;
+  if (viewer.controls) {
+    viewer.controls.enabled = true;
+  }
+}
 
 function createModelItem(m, index) {
   const item = document.createElement('div');
@@ -230,6 +395,10 @@ function createModelItem(m, index) {
     try {
       viewer.threeScene.remove(m.object);
       removeTooltip(m.object);
+      if (selectedModel === m.object && transformGizmo) {
+        transformGizmo.visible = false;
+        selectedModel = null;
+      }
     } catch (err) { }
     const idx = models.indexOf(m);
     if (idx >= 0) models.splice(idx, 1);
@@ -264,6 +433,11 @@ function refreshSidebarList() {
 function selectModel(obj) {
   selectedModel = obj;
   updateSelectedInfo();
+
+  if (transformGizmo) {
+    transformGizmo.visible = true;
+    transformGizmo.position.copy(obj.position);
+  }
 
   models.forEach(m => {
     if (m.object === obj) {
@@ -320,7 +494,7 @@ function updateTooltipVisibility(model, visible) {
 
 function updateTooltipPosition(tooltip, worldPos) {
   try {
-    const cam = viewer.camera || viewer.threeCamera || camera;
+    const cam = viewer.camera;
     tmpProj.copy(worldPos).project(cam);
     const x = (tmpProj.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-tmpProj.y * 0.5 + 0.5) * window.innerHeight;
@@ -333,6 +507,10 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   mixers.forEach(m => m.update(delta));
+
+  if (selectedModel && transformGizmo && transformGizmo.visible && !isDragging) {
+    transformGizmo.position.copy(selectedModel.position);
+  }
 
   models.forEach(m => {
     try {
@@ -429,6 +607,11 @@ document.getElementById('resetSceneBtn').addEventListener('click', () => {
   });
   models.length = 0;
   selectedModel = null;
+  
+  if (transformGizmo) {
+    transformGizmo.visible = false;
+  }
+  
   updateSelectedInfo();
   refreshSidebarList();
   if (gui) { try { gui.destroy(); } catch (e) { } gui = null; }
@@ -451,6 +634,7 @@ viewer.addSplatScene(splatPath, { progressiveLoad: true }).then(() => {
     if (canvasEl) {
       canvasEl.style.touchAction = 'none';
     }
+    setupTransformGizmo();
     animate();
   });
   const scene = viewer.threeScene;
