@@ -3,15 +3,20 @@
   "version": "1.0.0",
   "main": "gaussian-splats-3d.module.js",
   "scripts": {
-    "start": "nodemon serve.js"
+    "dev": "vite --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --port 5173"
   },
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@mkkellogg/gaussian-splats-3d": "^0.4.7",
     "express": "^5.1.0",
     "file-saver": "^2.0.5",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "nodemon": "^3.1.10",
+    "three": "^0.179.1"
   },
   "devDependencies": {
     "vite": "^7.1.3"

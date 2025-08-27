@@ -1,5 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
 
 <head>
   <meta charset="utf-8">
@@ -289,8 +287,6 @@
     let currentSphericalHarmonicsDegree;
   </script>
   <script type="module">
-    import * as GaussianSplats3D from 'gaussian-splats-3d';
-    import * as THREE from 'three';
 
     function fileBufferToSplatBuffer(fileBufferData, format, alphaRemovalThreshold, compressionLevel, sectionSize, sceneCenter, blockSize, bucketSize, outSphericalHarmonicsDegree = 0) {
       if (format === GaussianSplats3D.SceneFormat.Ply) {

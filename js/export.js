@@ -42,9 +42,9 @@ export function exportScene(splatPath, models) {
 
   // --- main.js ---
   const js = `
-import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
-import * as THREE from 'three';
-import { GLTFLoader } from 'GLTFLoader';
+import * as GaussianSplats3D from '/lib/gaussian-splats-3d.module.js';
+import * as THREE from '/lib/three.module.js';
+import { GLTFLoader } from '/lib/GLTFLoader.js';
 
 const loader = new GLTFLoader();
 
