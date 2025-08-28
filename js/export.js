@@ -28,7 +28,8 @@ export function exportScene(splatPath, models) {
       "imports": {
         "three": "./lib/three.module.js",
         "@mkkellogg/gaussian-splats-3d": "./lib/gaussian-splats-3d.module.js",
-        "GLTFLoader": "./lib/GLTFLoader.js"
+        "GLTFLoader": "./lib/GLTFLoader.js",
+        "DRACOLoader": "./lib/DRACOLoader.js"
       }
     }
   </script>
@@ -68,8 +69,12 @@ export function exportScene(splatPath, models) {
 import * as GaussianSplats3D from '/lib/gaussian-splats-3d.module.js';
 import * as THREE from '/lib/three.module.js';
 import { GLTFLoader } from '/lib/GLTFLoader.js';
+import { DRACOLoader } from '/lib/DRACOLoader.js';
 
 const loader = new GLTFLoader();
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+loader.setDRACOLoader(dracoLoader);
 const mixers = [];
 const clock = new THREE.Clock();
 const tooltips = new Map();
