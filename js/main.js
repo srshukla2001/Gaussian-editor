@@ -29,17 +29,27 @@ const viewer = new GaussianSplats3D.Viewer({
   cameraUp: [0, -1, 0],
   initialCameraPosition: [1.54163, 2.68515, -6.37228],
   initialCameraLookAt: [0.45622, 1.95338, 1.51278],
-  sphericalHarmonicsDegree: 2
+  sphericalHarmonicsDegree: 2,
+  // Frustum culling settings
+  useFrustumCulling: true,
+  frustumCullingDebug: false,
+  frustumCullingMargin: 0.5,
+  // Additional performance optimizations
+  halfPrecisionCovariancesOnGPU: true,
+  sortEnable: true,
+  showLoadingUI: false
 });
 
-const splatPath = '../assets/data/bonsai/bonsai.ksplat';
+const splatPath = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/SignatureGlobal/TwinTowerDXP/gs.spz';
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
 loader.setDRACOLoader(dracoLoader);
 const models = [];
+const groups = []; // New array to track groups of objects
 const mixers = [];
 let selectedModel = null;
+let selectedGroup = null; // Track selected group
 let gui = null;
 
 // Transform gizmo variables
@@ -61,9 +71,160 @@ document.body.appendChild(tooltip);
 
 const tooltips = new Map();
 
+// Add group section to sidebar
+const groupsSection = document.createElement('div');
+groupsSection.className = 'sidebar-section';
+groupsSection.innerHTML = `
+  <div class="section-header">
+    <h3>Groups</h3>
+  </div>
+  <div id="groupsList" class="section-content"></div>
+`;
+sidebar.insertBefore(groupsSection, sidebar.querySelector('.sidebar-section:nth-child(2)'));
+
+// Group management functions
+function createGroupFromFile(filename, meshes) {
+  const groupId = `group_${filename}_${Date.now()}`;
+  const group = {
+    id: groupId,
+    name: filename.replace('.glb', ''),
+    objects: meshes.map(m => m.object),
+    visible: true
+  };
+
+  groups.push(group);
+  return group;
+}
+
+function selectGroup(group) {
+  selectedGroup = group;
+  selectedModel = null;
+
+  if (transformGizmo) {
+    transformGizmo.visible = true;
+    const center = calculateGroupCenter(group);
+    transformGizmo.position.copy(center);
+  }
+
+  updateSelectedInfo();
+
+  if (gui) {
+    try {
+      gui.destroy();
+    } catch (e) { }
+    gui = null;
+  }
+
+  // Create a dummy object to represent the group for GUI purposes
+  const groupDummy = new THREE.Object3D();
+  groupDummy.name = group.name;
+  groupDummy.position.copy(calculateGroupCenter(group));
+  groupDummy.visible = true;
+  group.dummy = groupDummy;
+
+  gui = createGUI(groupDummy, true, group.objects);
+}
+function calculateGroupCenter(group) {
+  const center = new THREE.Vector3();
+  group.objects.forEach(obj => {
+    center.add(obj.position);
+  });
+  center.divideScalar(group.objects.length);
+  return center;
+}
+
+function transformGroup(group, operation, value) {
+  const center = calculateGroupCenter(group);
+
+  group.objects.forEach(obj => {
+    switch (operation) {
+      case 'translate':
+        obj.position.add(value);
+        break;
+      case 'rotate':
+        // Rotate around group center
+        const relativePos = new THREE.Vector3().subVectors(obj.position, center);
+        relativePos.applyAxisAngle(value.axis, value.angle);
+        obj.position.copy(center).add(relativePos);
+        obj.rotation[value.axis] += value.angle;
+        break;
+      case 'scale':
+        // Scale from group center
+        const scaleRelativePos = new THREE.Vector3().subVectors(obj.position, center);
+        scaleRelativePos.multiply(value);
+        obj.position.copy(center).add(scaleRelativePos);
+        obj.scale.multiply(value);
+        break;
+    }
+
+    obj.updateMatrix();
+  });
+}
+
+function refreshGroupList() {
+  const list = document.getElementById('groupsList');
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  groups.forEach((group, index) => {
+    const item = document.createElement('div');
+    item.className = 'group-item';
+    item.dataset.index = index;
+
+    const left = document.createElement('div');
+    left.style.display = 'flex';
+    left.style.flexDirection = 'column';
+    left.style.gap = '2px';
+
+    const nameDisplay = document.createElement('div');
+    nameDisplay.className = 'name';
+    nameDisplay.textContent = group.name;
+
+    const countDisplay = document.createElement('div');
+    countDisplay.style.fontSize = '11px';
+    countDisplay.style.color = 'var(--muted)';
+    countDisplay.textContent = `${group.objects.length} objects`;
+
+    left.appendChild(nameDisplay);
+    left.appendChild(countDisplay);
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+
+    const selectBtn = document.createElement('button');
+    selectBtn.className = 'small-btn';
+    selectBtn.textContent = 'Select Group';
+    selectBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectGroup(group);
+    });
+
+    const visibilityBtn = document.createElement('button');
+    visibilityBtn.className = 'small-btn';
+    visibilityBtn.textContent = group.visible ? 'Hide' : 'Show';
+    visibilityBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      group.visible = !group.visible;
+      group.objects.forEach(obj => {
+        obj.visible = group.visible;
+      });
+      visibilityBtn.textContent = group.visible ? 'Hide' : 'Show';
+    });
+
+    actions.appendChild(selectBtn);
+    actions.appendChild(visibilityBtn);
+
+    item.appendChild(left);
+    item.appendChild(actions);
+
+    item.addEventListener('click', () => selectGroup(group));
+
+    list.appendChild(item);
+  });
+}
+
 // Transform Gizmo Functions
-
-
 function setupTransformGizmo() {
   transformGizmo = createTransformGizmo();
   viewer.threeScene.add(transformGizmo);
@@ -77,8 +238,7 @@ function setupTransformGizmo() {
 }
 
 function onMouseDown(event) {
-  if (!selectedModel || !transformGizmo.visible) return;
-
+  // Check if we're clicking on a transform gizmo handle first
   const mouse = new THREE.Vector2();
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -86,23 +246,71 @@ function onMouseDown(event) {
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, viewer.camera);
 
-  const intersects = raycaster.intersectObjects(transformGizmo.children, true);
+  // Check for gizmo handle clicks first
+  if ((selectedModel || selectedGroup) && transformGizmo && transformGizmo.visible) {
+    const gizmoIntersects = raycaster.intersectObjects(transformGizmo.children, true);
 
-  for (const intersect of intersects) {
-    if (intersect.object.userData.isHandle) {
-      selectedAxis = intersect.object.userData.axis;
-      isDragging = true;
-      dragStartPoint.copy(intersect.point);
-      if (viewer.controls) {
-        viewer.controls.enabled = false;
+    for (const intersect of gizmoIntersects) {
+      if (intersect.object.userData.isHandle) {
+        selectedAxis = intersect.object.userData.axis;
+        isDragging = true;
+        dragStartPoint.copy(intersect.point);
+        if (viewer.controls) {
+          viewer.controls.enabled = false;
+        }
+        return; // Exit early if we hit a gizmo handle
       }
-      break;
+    }
+  }
+
+  // If we didn't click on a gizmo handle, check for object/group selection
+  const sceneIntersects = raycaster.intersectObjects(viewer.threeScene.children, true);
+
+  // Filter out gizmo objects and splat objects
+  const validIntersects = sceneIntersects.filter(intersect =>
+    !intersect.object.userData?.isHandle &&
+    !intersect.object.isGaussianSplatMesh
+  );
+
+  if (validIntersects.length > 0) {
+    const clickedObject = validIntersects[0].object;
+
+    // Check if this object belongs to a group
+    if (clickedObject.userData && clickedObject.userData.groupId) {
+      const groupId = clickedObject.userData.groupId;
+      const group = groups.find(g => g.id === groupId);
+
+      if (group) {
+        selectGroup(group);
+        return;
+      }
+    }
+
+    // If not part of a group, select the individual object
+    const modelData = models.find(m => m.object === clickedObject);
+    if (modelData) {
+      selectModel(clickedObject);
+    }
+  } else {
+    // Clicked on empty space, deselect everything
+    selectedModel = null;
+    selectedGroup = null;
+    if (transformGizmo) {
+      transformGizmo.visible = false;
+    }
+    updateSelectedInfo();
+
+    if (gui) {
+      try {
+        gui.destroy();
+      } catch (e) { }
+      gui = null;
     }
   }
 }
 
 function onMouseMove(event) {
-  if (!isDragging || !selectedModel || !selectedAxis) return;
+  if (!isDragging || !selectedAxis) return;
 
   const mouse = new THREE.Vector2();
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -130,14 +338,21 @@ function onMouseMove(event) {
 
   const delta = new THREE.Vector3().subVectors(intersection, dragStartPoint);
 
-  switch (selectedAxis) {
-    case 'x': selectedModel.position.x += delta.x; break;
-    case 'y': selectedModel.position.y += delta.y; break;
-    case 'z': selectedModel.position.z += delta.z; break;
+  if (selectedModel) {
+    // Transform individual object
+    switch (selectedAxis) {
+      case 'x': selectedModel.position.x += delta.x; break;
+      case 'y': selectedModel.position.y += delta.y; break;
+      case 'z': selectedModel.position.z += delta.z; break;
+    }
+    transformGizmo.position.copy(selectedModel.position);
+  } else if (selectedGroup) {
+    // Transform entire group
+    transformGroup(selectedGroup, 'translate', delta);
+    transformGizmo.position.copy(calculateGroupCenter(selectedGroup));
   }
 
   dragStartPoint.copy(intersection);
-  transformGizmo.position.copy(selectedModel.position);
   updateSelectedInfo();
 }
 
@@ -148,6 +363,7 @@ function onMouseUp() {
     viewer.controls.enabled = true;
   }
 }
+
 const tooltipInputStyle = document.createElement('style');
 tooltipInputStyle.textContent = `
   .tooltip-input {
@@ -165,8 +381,27 @@ tooltipInputStyle.textContent = `
     outline: none;
     border-color: var(--accent);
   }
+  
+  .group-item {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .group-item:hover {
+    background-color: var(--bg-secondary);
+  }
+
+  .group-item .name {
+    font-weight: 500;
+    margin-bottom: 2px;
+  }
 `;
 document.head.appendChild(tooltipInputStyle);
+
 function updateTooltipContent(model) {
   if (tooltips.has(model)) {
     const tooltip = tooltips.get(model);
@@ -184,6 +419,7 @@ function updateTooltipContent(model) {
     });
   }
 }
+
 function createModelItem(m, index) {
   const item = document.createElement('div');
   item.className = 'model-item';
@@ -238,6 +474,15 @@ function createModelItem(m, index) {
   meta.style.color = 'var(--muted)';
   meta.textContent = m.object.type;
 
+  // Show source file if available
+  if (m.sourceFile) {
+    const sourceInfo = document.createElement('div');
+    sourceInfo.style.fontSize = '10px';
+    sourceInfo.style.color = 'var(--accent)';
+    sourceInfo.textContent = `From: ${m.sourceFile}`;
+    meta.appendChild(sourceInfo);
+  }
+
   left.appendChild(nameDisplay);
   left.appendChild(meta);
   left.appendChild(nameInput);
@@ -266,7 +511,13 @@ function createModelItem(m, index) {
   selectBtn.textContent = 'Select';
   selectBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    selectModel(m.object);
+    selectGroup(group);
+
+    // Also update the transform gizmo position
+    if (transformGizmo) {
+      transformGizmo.visible = true;
+      transformGizmo.position.copy(calculateGroupCenter(group));
+    }
   });
 
   const removeBtn = document.createElement('button');
@@ -281,10 +532,33 @@ function createModelItem(m, index) {
         transformGizmo.visible = false;
         selectedModel = null;
       }
+
+      // Remove from group if it belongs to one
+      if (m.groupId) {
+        const group = groups.find(g => g.id === m.groupId);
+        if (group) {
+          const objIndex = group.objects.indexOf(m.object);
+          if (objIndex >= 0) {
+            group.objects.splice(objIndex, 1);
+          }
+
+          // Remove group if empty
+          if (group.objects.length === 0) {
+            const groupIndex = groups.indexOf(group);
+            if (groupIndex >= 0) {
+              groups.splice(groupIndex, 1);
+              if (selectedGroup === group) {
+                selectedGroup = null;
+              }
+            }
+          }
+        }
+      }
     } catch (err) { }
     const idx = models.indexOf(m);
     if (idx >= 0) models.splice(idx, 1);
     refreshSidebarList();
+    refreshGroupList();
     if (selectedModel === m.object) {
       selectedModel = null;
       updateSelectedInfo();
@@ -304,7 +578,6 @@ function createModelItem(m, index) {
   return item;
 }
 
-
 function refreshSidebarList() {
   const list = document.getElementById('modelsList');
   list.innerHTML = '';
@@ -315,6 +588,8 @@ function refreshSidebarList() {
 
 function selectModel(obj) {
   selectedModel = obj;
+  selectedGroup = null;
+
   updateSelectedInfo();
 
   if (transformGizmo) {
@@ -322,26 +597,42 @@ function selectModel(obj) {
     transformGizmo.position.copy(obj.position);
   }
 
-  models.forEach(m => {
-    if (m.object === obj) {
-      if (gui) { try { gui.destroy(); } catch (e) { } }
-      gui = createGUI(obj);
-    }
-  });
+  if (gui) {
+    try {
+      gui.destroy();
+    } catch (e) { }
+    gui = null;
+  }
+
+  gui = createGUI(obj);
 }
 
 function updateSelectedInfo() {
   const sel = document.getElementById('selectedInfo');
-  if (!selectedModel) {
+  if (selectedModel) {
+    sel.innerHTML = `
+      <div style="font-weight:600">${selectedModel.name || selectedModel.type}</div>
+      <div style="font-size:12px; color:var(--muted); margin-top:6px;">
+        Pos: ${selectedModel.position.x.toFixed(2)}, ${selectedModel.position.y.toFixed(2)}, ${selectedModel.position.z.toFixed(2)}
+      </div>
+      <div style="font-size:10px; color:var(--accent); margin-top:4px;">
+        Individual Object
+      </div>
+    `;
+  } else if (selectedGroup) {
+    const center = calculateGroupCenter(selectedGroup);
+    sel.innerHTML = `
+      <div style="font-weight:600">${selectedGroup.name}</div>
+      <div style="font-size:12px; color:var(--muted); margin-top:6px;">
+        Center: ${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}
+      </div>
+      <div style="font-size:10px; color:var(--accent); margin-top:4px;">
+        Group (${selectedGroup.objects.length} objects)
+      </div>
+    `;
+  } else {
     sel.textContent = 'None';
-    return;
   }
-  sel.innerHTML = `
-    <div style="font-weight:600">${selectedModel.name || selectedModel.type}</div>
-    <div style="font-size:12px; color:var(--muted); margin-top:6px;">
-      Pos: ${selectedModel.position.x.toFixed(2)}, ${selectedModel.position.y.toFixed(2)}, ${selectedModel.position.z.toFixed(2)}
-    </div>
-  `;
 }
 
 function createTooltipForModel(model) {
@@ -397,8 +688,12 @@ function animate() {
   const delta = clock.getDelta();
   mixers.forEach(m => m.update(delta));
 
-  if (selectedModel && transformGizmo && transformGizmo.visible && !isDragging) {
-    transformGizmo.position.copy(selectedModel.position);
+  if (((selectedModel || selectedGroup) && transformGizmo && transformGizmo.visible && !isDragging)) {
+    if (selectedModel) {
+      transformGizmo.position.copy(selectedModel.position);
+    } else if (selectedGroup) {
+      transformGizmo.position.copy(calculateGroupCenter(selectedGroup));
+    }
   }
 
   models.forEach(m => {
@@ -442,31 +737,83 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
   if (!file) return;
   const url = URL.createObjectURL(file);
   loader.load(url, (gltf) => {
-    const obj = gltf.scene;
-    obj.name = file.name;
+    const scene = gltf.scene;
 
-    obj.position.set(0, 0, 0);
-    obj.rotation.set(0, 0, 0);
-    obj.scale.set(1, 1, 1);
+    // Function to flatten the hierarchy and extract all meshes
+    const extractAllMeshes = (object, matrix = new THREE.Matrix4()) => {
+      const meshes = [];
+      const currentMatrix = matrix.clone().multiply(object.matrix);
 
-    obj.traverse(c => {
-      if (c.isMesh) {
-        c.castShadow = c.receiveShadow = true;
+      // If this object is a mesh, add it to our list
+      if (object.isMesh) {
+        const clone = object.clone();
+
+        // Apply the accumulated transformation
+        clone.applyMatrix4(currentMatrix);
+
+        // Reset position, rotation, scale for independent control
+        clone.position.set(0, 0, 0);
+        clone.rotation.set(0, 0, 0);
+        clone.scale.set(1, 1, 1);
+
+        // Update matrix
+        clone.updateMatrix();
+        clone.updateMatrixWorld();
+
+        meshes.push({ object: clone, originalName: object.name });
       }
+
+      // Process all children recursively
+      if (object.children && object.children.length > 0) {
+        object.children.forEach(child => {
+          meshes.push(...extractAllMeshes(child, currentMatrix));
+        });
+      }
+
+      return meshes;
+    };
+
+    // Extract all meshes from the GLB scene
+    const allMeshes = extractAllMeshes(scene);
+
+    if (allMeshes.length === 0) {
+      console.warn('No meshes found in the GLB file');
+      return;
+    }
+
+    // Create a group for this file
+    const group = createGroupFromFile(file.name, allMeshes);
+
+    // Add each mesh as a separate object
+    allMeshes.forEach((meshData, index) => {
+      const mesh = meshData.object;
+
+      // Ensure proper naming
+      mesh.name = meshData.originalName || `${file.name.replace('.glb', '')}_part_${index + 1}`;
+
+      // Set up mesh properties
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData.groupId = group.id; // Store group reference
+      mesh.userData.isPartOfGroup = true;
+      // Add to scene
+      viewer.threeScene.add(mesh);
+
+      // Add to models list
+      models.push({
+        name: mesh.name,
+        object: mesh,
+        showTooltip: true,
+        sourceFile: file.name,
+        groupId: group.id
+      });
     });
 
-    viewer.threeScene.add(obj);
-    models.push({ name: file.name, object: obj, showTooltip: true });
     refreshSidebarList();
-    selectModel(obj);
+    refreshGroupList();
 
-    if (gltf.animations && gltf.animations.length > 0) {
-      const mixer = new THREE.AnimationMixer(obj);
-      gltf.animations.forEach(clip => {
-        mixer.clipAction(clip).play();
-      });
-      mixers.push(mixer);
-    }
+    // Select the group by default
+    selectGroup(group);
 
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }, undefined, (err) => {
@@ -478,7 +825,7 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
 });
 
 document.getElementById('exportBtnSidebar').addEventListener('click', () => {
-  exportScene(splatPath, models);
+  exportScene(splatPath, models, groups);
 });
 
 document.getElementById('centerCameraBtn').addEventListener('click', () => {
@@ -495,7 +842,9 @@ document.getElementById('resetSceneBtn').addEventListener('click', () => {
     } catch (e) { }
   });
   models.length = 0;
+  groups.length = 0;
   selectedModel = null;
+  selectedGroup = null;
 
   if (transformGizmo) {
     transformGizmo.visible = false;
@@ -503,6 +852,7 @@ document.getElementById('resetSceneBtn').addEventListener('click', () => {
 
   updateSelectedInfo();
   refreshSidebarList();
+  refreshGroupList();
   if (gui) { try { gui.destroy(); } catch (e) { } gui = null; }
 
   const box = new THREE.Mesh(
@@ -515,7 +865,7 @@ document.getElementById('resetSceneBtn').addEventListener('click', () => {
   refreshSidebarList();
 });
 
-viewer.addSplatScene(splatPath, { progressiveLoad: true }).then(() => {
+viewer.addSplatScene(splatPath, { progressiveLoad: false, useFrustumCulling: true }).then(() => {
   viewer.start();
 
   requestAnimationFrame(() => {
@@ -546,6 +896,7 @@ viewer.addSplatScene(splatPath, { progressiveLoad: true }).then(() => {
   selectedModel = box;
   updateSelectedInfo();
   refreshSidebarList();
+  refreshGroupList();
 
   window.addEventListener('resize', () => {
     models.forEach(m => {
