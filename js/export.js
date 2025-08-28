@@ -6,6 +6,8 @@ export function exportScene(splatPath, models) {
       const o = m.object;
       return {
         name: m.name,
+        description: m.description || `Description for ${m.name || 'model'}`,
+        buttonText: m.buttonText || "Select",
         color: o.material?.color ? o.material.color.getHexString() : null,
         wireframe: o.material?.wireframe || false,
         geometryType: o.geometry?.type || 'BoxGeometry',
@@ -34,30 +36,67 @@ export function exportScene(splatPath, models) {
     }
   </script>
   <style>
+    :root {
+    --sidebar-w: 280px;
+    --bg: #1e1e1e;
+    --panel: #252526;
+    --header-bg: #2d2d30;
+    --muted: #969696;
+    --accent: #0078d4;
+    --accent-hover: #1b8bf9;
+    --danger: #f44747;
+    --glass: rgba(255,255,255,0.05);
+    --border: #3e3e42;
+    --section-header: #37373d;
+  }
     body{margin:0;overflow:hidden;background:#000}
-    .hp-tooltip {
-      position: absolute;
-      pointer-events: auto;
-      background: rgba(10,11,12,0.9);
-      color: #fff;
-      padding: 10px 12px;
-      border-radius: 8px;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.6);
-      transform: translate(-50%, -100%);
-      z-index: 60;
-      min-width: 180px;
-    }
-    .hp-tooltip h4 { margin:0 0 6px 0; font-size:13px; }
-    .hp-tooltip p { margin:0 0 8px 0; font-size:12px; color:#9aa0a6; }
-    .hp-tooltip button { 
-      border-radius:6px; 
-      padding:6px 8px; 
-      border: none; 
-      cursor:pointer; 
-      background: #7bd389; 
-      color:#052018; 
-      font-weight:600; 
-    }
+  .hp-tooltip {
+    position: absolute;
+    pointer-events: auto;
+    background: rgba(30, 30, 30, 0.95);
+    color: #fff;
+    padding: 10px 12px;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    transform: translate(-50%, -100%);
+    z-index: 60;
+    min-width: 180px;
+    border: 1px solid var(--border);
+  }
+      .hp-tooltip h4 { 
+    margin: 0 0 6px 0; 
+    font-size: 13px; 
+    color: #ffffff;
+  }
+
+  .hp-tooltip p { 
+    margin: 0 0 8px 0; 
+    font-size: 12px; 
+    color: var(--muted); 
+  }
+
+  .hp-tooltip button { 
+    border-radius: 4px; 
+    padding: 6px 8px; 
+    border: none; 
+    cursor: pointer; 
+    background: var(--accent); 
+    color: #ffffff; 
+    font-weight: 500; 
+    font-size: 12px;
+  }
+
+  .tooltip-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .tooltip-toggle input[type="checkbox"] {
+    margin: 0;
+  }
   </style>
 </head>
 <body>
@@ -84,15 +123,20 @@ let sceneData = null;
 let camera = null;
 let scene = null;
 
-function createTooltipForModel(model) {
+function createTooltipForModel(model, modelData) {
   const tooltip = document.createElement('div');
   tooltip.className = 'hp-tooltip';
-  tooltip.innerHTML = \`<h4>\${model.name || model.type}</h4><p>Selectable object</p><button>Select</button>\`;
+  
+  const name = modelData?.name || model.name || model.type;
+  const description = modelData?.description || \`Description for \${name}\`;
+  const buttonText = modelData?.buttonText || "Select";
+  
+  tooltip.innerHTML = \`<h4>\${name}</h4><p>\${description}</p><button>\${buttonText}</button>\`;
   tooltip.style.display = 'block';
   document.body.appendChild(tooltip);
   
   tooltip.querySelector('button').addEventListener('click', () => {
-    console.log('Selected model:', model.name);
+    console.log('Selected model:', name);
   });
   
   return tooltip;
@@ -118,11 +162,14 @@ function animate() {
   mixers.forEach(m => m.update(delta));
 
   if (camera) {
-    tooltips.forEach((tooltip, model) => {
+    tooltips.forEach((tooltipData, model) => {
       try {
-        const anchor = new THREE.Vector3();
-        model.getWorldPosition(anchor);
-        updateTooltipPosition(tooltip, anchor);
+        const { tooltip, modelData } = tooltipData;
+        if (modelData.showTooltip) {
+          const anchor = new THREE.Vector3();
+          model.getWorldPosition(anchor);
+          updateTooltipPosition(tooltip, anchor);
+        }
       } catch (e) {
         console.error('Error in tooltip animation:', e);
       }
@@ -149,8 +196,8 @@ function loadModels() {
         scene.add(obj);
 
         if (modelData.showTooltip) {
-          const tooltip = createTooltipForModel(obj);
-          tooltips.set(obj, tooltip);
+          const tooltip = createTooltipForModel(obj, modelData);
+          tooltips.set(obj, { tooltip, modelData });
         }
 
         if (gltf.animations && gltf.animations.length > 0) {
@@ -185,8 +232,8 @@ function loadModels() {
       scene.add(obj);
 
       if (modelData.showTooltip) {
-        const tooltip = createTooltipForModel(obj);
-        tooltips.set(obj, tooltip);
+        const tooltip = createTooltipForModel(obj, modelData);
+        tooltips.set(obj, { tooltip, modelData });
       }
     }
   });
@@ -232,11 +279,14 @@ fetch('scene.json')
 
       // Add resize handler
       window.addEventListener('resize', () => {
-        tooltips.forEach((tooltip, model) => {
+        tooltips.forEach((tooltipData, model) => {
           try {
-            const anchor = new THREE.Vector3();
-            model.getWorldPosition(anchor);
-            updateTooltipPosition(tooltip, anchor);
+            const { tooltip, modelData } = tooltipData;
+            if (modelData.showTooltip) {
+              const anchor = new THREE.Vector3();
+              model.getWorldPosition(anchor);
+              updateTooltipPosition(tooltip, anchor);
+            }
           } catch (e) {}
         });
       });
