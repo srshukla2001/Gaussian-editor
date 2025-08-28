@@ -5,8 +5,8 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import GUI from 'lil-gui';
 import { exportScene } from './export.js';
 import { createGUI } from './gui.js';
-import {createTransformGizmo} from './gizmo.js';
-import {styleTag} from './styles.js'
+import { createTransformGizmo } from './gizmo.js';
+import { styleTag } from './styles.js'
 import { sidebar } from './sidebar.js';
 window.THREE = THREE;
 
@@ -68,7 +68,7 @@ function setupTransformGizmo() {
   transformGizmo = createTransformGizmo();
   viewer.threeScene.add(transformGizmo);
   transformGizmo.visible = false;
-  
+
   if (viewer.renderer && viewer.renderer.domElement) {
     viewer.renderer.domElement.addEventListener('mousedown', onMouseDown);
     viewer.renderer.domElement.addEventListener('mousemove', onMouseMove);
@@ -78,16 +78,16 @@ function setupTransformGizmo() {
 
 function onMouseDown(event) {
   if (!selectedModel || !transformGizmo.visible) return;
-  
+
   const mouse = new THREE.Vector2();
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-  
+
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, viewer.camera);
-  
+
   const intersects = raycaster.intersectObjects(transformGizmo.children, true);
-  
+
   for (const intersect of intersects) {
     if (intersect.object.userData.isHandle) {
       selectedAxis = intersect.object.userData.axis;
@@ -103,39 +103,39 @@ function onMouseDown(event) {
 
 function onMouseMove(event) {
   if (!isDragging || !selectedModel || !selectedAxis) return;
-  
+
   const mouse = new THREE.Vector2();
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-  
+
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, viewer.camera);
-  
+
   const plane = new THREE.Plane();
   const axisVector = new THREE.Vector3();
-  
+
   switch (selectedAxis) {
     case 'x': axisVector.set(1, 0, 0); break;
     case 'y': axisVector.set(0, 1, 0); break;
     case 'z': axisVector.set(0, 0, 1); break;
   }
-  
+
   const cameraDirection = new THREE.Vector3();
   viewer.camera.getWorldDirection(cameraDirection);
   const cross = new THREE.Vector3().crossVectors(axisVector, cameraDirection);
   plane.setFromNormalAndCoplanarPoint(cross, dragStartPoint);
-  
+
   const intersection = new THREE.Vector3();
   raycaster.ray.intersectPlane(plane, intersection);
-  
+
   const delta = new THREE.Vector3().subVectors(intersection, dragStartPoint);
-  
+
   switch (selectedAxis) {
     case 'x': selectedModel.position.x += delta.x; break;
     case 'y': selectedModel.position.y += delta.y; break;
     case 'z': selectedModel.position.z += delta.z; break;
   }
-  
+
   dragStartPoint.copy(intersection);
   transformGizmo.position.copy(selectedModel.position);
   updateSelectedInfo();
@@ -148,7 +148,42 @@ function onMouseUp() {
     viewer.controls.enabled = true;
   }
 }
+const tooltipInputStyle = document.createElement('style');
+tooltipInputStyle.textContent = `
+  .tooltip-input {
+    width: 100%;
+    padding: 4px;
+    margin-top: 4px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-secondary);
+    color: var(--text);
+  }
+  
+  .tooltip-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+`;
+document.head.appendChild(tooltipInputStyle);
+function updateTooltipContent(model) {
+  if (tooltips.has(model)) {
+    const tooltip = tooltips.get(model);
+    const modelData = models.find(m => m.object === model);
 
+    const name = modelData?.name || model.name || model.type;
+    const description = modelData?.description || `Description for ${name}`;
+    const buttonText = modelData?.buttonText || "Select";
+
+    tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p><button>${buttonText}</button>`;
+
+    // Reattach event listener
+    tooltip.querySelector('button').addEventListener('click', () => {
+      selectModel(model);
+    });
+  }
+}
 function createModelItem(m, index) {
   const item = document.createElement('div');
   item.className = 'model-item';
@@ -158,19 +193,60 @@ function createModelItem(m, index) {
   left.style.display = 'flex';
   left.style.flexDirection = 'column';
   left.style.gap = '2px';
-  const name = document.createElement('div');
-  name.className = 'name';
-  name.textContent = m.name || `Model ${index + 1}`;
+
+  // Name input
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.value = m.name || `Model ${index + 1}`;
+  nameInput.placeholder = "Model name";
+  nameInput.className = 'tooltip-input';
+  nameInput.addEventListener('change', (e) => {
+    m.name = e.target.value;
+    m.object.name = e.target.value;
+    nameDisplay.textContent = m.name || `Model ${index + 1}`;
+    updateTooltipContent(m.object);
+  });
+
+  // Description input
+  const descInput = document.createElement('input');
+  descInput.type = 'text';
+  descInput.value = m.description || `Description for ${m.name || 'model'}`;
+  descInput.placeholder = "Model description";
+  descInput.className = 'tooltip-input';
+  descInput.addEventListener('change', (e) => {
+    m.description = e.target.value;
+    updateTooltipContent(m.object);
+  });
+
+  // Button text input
+  const buttonInput = document.createElement('input');
+  buttonInput.type = 'text';
+  buttonInput.value = m.buttonText || "Select";
+  buttonInput.placeholder = "Button text";
+  buttonInput.className = 'tooltip-input';
+  buttonInput.addEventListener('change', (e) => {
+    m.buttonText = e.target.value;
+    updateTooltipContent(m.object);
+  });
+
+  const nameDisplay = document.createElement('div');
+  nameDisplay.className = 'name';
+  nameDisplay.textContent = m.name || `Model ${index + 1}`;
+
   const meta = document.createElement('div');
   meta.style.fontSize = '11px';
   meta.style.color = 'var(--muted)';
   meta.textContent = m.object.type;
-  left.appendChild(name);
+
+  left.appendChild(nameDisplay);
   left.appendChild(meta);
+  left.appendChild(nameInput);
+  left.appendChild(descInput);
+  left.appendChild(buttonInput);
 
   const actions = document.createElement('div');
   actions.className = 'actions';
-  
+
   const tooltipToggle = document.createElement('div');
   tooltipToggle.className = 'tooltip-toggle';
   const toggleCheckbox = document.createElement('input');
@@ -228,6 +304,7 @@ function createModelItem(m, index) {
   return item;
 }
 
+
 function refreshSidebarList() {
   const list = document.getElementById('modelsList');
   list.innerHTML = '';
@@ -268,16 +345,22 @@ function updateSelectedInfo() {
 }
 
 function createTooltipForModel(model) {
+  const modelData = models.find(m => m.object === model);
   const tooltip = document.createElement('div');
   tooltip.className = 'hp-tooltip';
-  tooltip.innerHTML = `<h4>${model.name || model.type}</h4><p>Selectable object</p><button>Select</button>`;
+
+  const name = modelData?.name || model.name || model.type;
+  const description = modelData?.description || `Description for ${name}`;
+  const buttonText = modelData?.buttonText || "Select";
+
+  tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p><button>${buttonText}</button>`;
   tooltip.style.display = 'block';
   document.body.appendChild(tooltip);
-  
+
   tooltip.querySelector('button').addEventListener('click', () => {
     selectModel(model);
   });
-  
+
   return tooltip;
 }
 
@@ -286,7 +369,7 @@ function removeTooltip(model) {
     const tooltip = tooltips.get(model);
     try {
       document.body.removeChild(tooltip);
-    } catch (e) {}
+    } catch (e) { }
     tooltips.delete(model);
   }
 }
@@ -305,7 +388,7 @@ function updateTooltipPosition(tooltip, worldPos) {
     const x = (tmpProj.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-tmpProj.y * 0.5 + 0.5) * window.innerHeight;
     tooltip.style.transform = `translate(-50%, -100%) translate(${x}px,${y}px)`;
-  } catch (e) {}
+  } catch (e) { }
 }
 
 const clock = new THREE.Clock();
@@ -322,18 +405,18 @@ function animate() {
     try {
       const anchor = new THREE.Vector3();
       m.object.getWorldPosition(anchor);
-      
+
       if (!tooltips.has(m.object)) {
         const tooltip = createTooltipForModel(m.object);
         tooltips.set(m.object, tooltip);
         updateTooltipVisibility(m.object, m.showTooltip !== false);
       }
-      
+
       if (m.showTooltip !== false) {
         const tooltip = tooltips.get(m.object);
         updateTooltipPosition(tooltip, anchor);
       }
-    } catch (e) {}
+    } catch (e) { }
   });
 }
 animate();
@@ -406,18 +489,18 @@ document.getElementById('centerCameraBtn').addEventListener('click', () => {
 
 document.getElementById('resetSceneBtn').addEventListener('click', () => {
   models.forEach(m => {
-    try { 
+    try {
       viewer.threeScene.remove(m.object);
       removeTooltip(m.object);
     } catch (e) { }
   });
   models.length = 0;
   selectedModel = null;
-  
+
   if (transformGizmo) {
     transformGizmo.visible = false;
   }
-  
+
   updateSelectedInfo();
   refreshSidebarList();
   if (gui) { try { gui.destroy(); } catch (e) { } gui = null; }
@@ -472,7 +555,7 @@ viewer.addSplatScene(splatPath, { progressiveLoad: true }).then(() => {
           m.object.getWorldPosition(anchor);
           updateTooltipPosition(tooltips.get(m.object), anchor);
         }
-      } catch (e) {}
+      } catch (e) { }
     });
   });
 
