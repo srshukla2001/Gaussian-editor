@@ -54,7 +54,10 @@ sidebar.innerHTML = `
       </div>
       <div class="hp-section-content">
         <div id="selectedInfo" class="selected-info">None</div>
-        
+         <div class="section-header">
+    <h3>Groups</h3>
+  </div>
+  <div id="groupsList" class="section-content"></div>
         <!-- Transform controls -->
         <div class="transform-section">
           <div class="transform-label">Transform</div>
