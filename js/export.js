@@ -1,28 +1,54 @@
 // export.js
 export function exportScene(splatPath, models, groups) {
+  // Enhanced model data collection with proper GLB support
   const sceneData = {
     splatPath,
     models: models.map(m => {
       const o = m.object;
+      
+      // Extract material properties properly
+      let materialProps = {};
+      if (o.material) {
+        materialProps = {
+          color: o.material.color ? o.material.color.getHexString() : null,
+          wireframe: o.material.wireframe || false,
+          transparent: o.material.transparent || false,
+          opacity: o.material.opacity || 1.0,
+          emissive: o.material.emissive ? o.material.emissive.getHexString() : null,
+          metalness: o.material.metalness || 0,
+          roughness: o.material.roughness || 1,
+          envMapIntensity: o.material.envMapIntensity || 1
+        };
+        
+        // Preserve original GLB material properties if available
+        if (m.originalMaterial) {
+          materialProps.originalColor = m.originalMaterial.color;
+          materialProps.originalWireframe = m.originalMaterial.wireframe;
+        }
+      }
+      
       return {
         name: m.name,
         description: m.description || `Description for ${m.name || 'model'}`,
         buttonText: m.buttonText || "Select",
-        color: o.material?.color ? o.material.color.getHexString() : null,
-        wireframe: o.material?.wireframe || false,
         geometryType: o.geometry?.type || 'BoxGeometry',
         position: o.position.toArray(),
         rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
         scale: o.scale.toArray(),
         showTooltip: m.showTooltip !== false,
         groupId: m.groupId || null,
-        sourceFile: m.sourceFile || null
+        sourceFile: m.sourceFile || null,
+        isGLBPart: m.isGLBPart || false,
+        originalMatrix: m.originalMatrix || null,
+        material: materialProps,
+        uuid: o.uuid
       };
     }),
     groups: groups.map(g => ({
       id: g.id,
       name: g.name,
-      objectIds: g.objects.map(obj => models.findIndex(m => m.object === obj)).filter(i => i !== -1)
+      objectIds: g.objects.map(obj => models.findIndex(m => m.object === obj)).filter(i => i !== -1),
+      sourceFile: g.sourceFile || null
     }))
   };
 
@@ -219,23 +245,79 @@ function loadGLBModel(modelData, onComplete) {
   }
 
   loader.load('assets/' + modelData.sourceFile, gltf => {
-    const obj = gltf.scene;
-    obj.name = modelData.name;
+    let obj = null;
     
-    if (modelData.position) obj.position.fromArray(modelData.position);
-    if (modelData.rotation) obj.rotation.set(...modelData.rotation);
-    if (modelData.scale) obj.scale.fromArray(modelData.scale);
+    if (modelData.isGLBPart) {
+      // For GLB parts, we need to extract the specific mesh
+      const meshes = [];
+      gltf.scene.traverse(child => {
+        if (child.isMesh) {
+          meshes.push(child);
+        }
+      });
+      
+      // Try to find by name or use first mesh
+      let targetMesh = meshes.find(mesh => mesh.name === modelData.name);
+      if (!targetMesh && meshes.length > 0) {
+        targetMesh = meshes[0];
+      }
+      
+      if (targetMesh) {
+        obj = targetMesh.clone();
+        obj.name = modelData.name;
+        
+        // Apply the edited transformations from the editor
+        if (modelData.position) obj.position.fromArray(modelData.position);
+        if (modelData.rotation) obj.rotation.set(...modelData.rotation);
+        if (modelData.scale) obj.scale.fromArray(modelData.scale);
+        
+        // Apply material properties from editor
+        if (modelData.material && obj.material) {
+          if (modelData.material.color) {
+            obj.material.color.set('#' + modelData.material.color);
+          }
+          if (modelData.material.wireframe !== undefined) {
+            obj.material.wireframe = modelData.material.wireframe;
+          }
+          if (modelData.material.transparent !== undefined) {
+            obj.material.transparent = modelData.material.transparent;
+          }
+          if (modelData.material.opacity !== undefined) {
+            obj.material.opacity = modelData.material.opacity;
+          }
+          if (modelData.material.emissive) {
+            obj.material.emissive.set('#' + modelData.material.emissive);
+          }
+          if (modelData.material.metalness !== undefined) {
+            obj.material.metalness = modelData.material.metalness;
+          }
+          if (modelData.material.roughness !== undefined) {
+            obj.material.roughness = modelData.material.roughness;
+          }
+          obj.material.needsUpdate = true;
+        }
+      }
+    } else {
+      // Regular GLB model
+      obj = gltf.scene;
+      obj.name = modelData.name;
+      
+      if (modelData.position) obj.position.fromArray(modelData.position);
+      if (modelData.rotation) obj.rotation.set(...modelData.rotation);
+      if (modelData.scale) obj.scale.fromArray(modelData.scale);
+    }
     
+    if (!obj) {
+      console.error('Failed to create object for model:', modelData.name);
+      onComplete(null);
+      return;
+    }
+    
+    // Ensure shadow properties
     obj.traverse(c => {
       if (c.isMesh) {
         c.castShadow = true;
         c.receiveShadow = true;
-        if (modelData.color) {
-          c.material.color.set('#' + modelData.color);
-        }
-        if (modelData.wireframe !== undefined) {
-          c.material.wireframe = modelData.wireframe;
-        }
       }
     });
     
@@ -280,9 +362,15 @@ function loadPrimitiveModel(modelData) {
       geometry = new THREE.BoxGeometry(1, 1, 1);
   }
 
+  const materialProps = modelData.material || {};
   const material = new THREE.MeshStandardMaterial({
-    color: modelData.color ? '#' + modelData.color : '#ffff00',
-    wireframe: modelData.wireframe || false
+    color: materialProps.color ? '#' + materialProps.color : '#ffff00',
+    wireframe: materialProps.wireframe || false,
+    transparent: materialProps.transparent || false,
+    opacity: materialProps.opacity !== undefined ? materialProps.opacity : 1.0,
+    emissive: materialProps.emissive ? '#' + materialProps.emissive : '#000000',
+    metalness: materialProps.metalness || 0,
+    roughness: materialProps.roughness || 1
   });
 
   const obj = new THREE.Mesh(geometry, material);
@@ -303,34 +391,44 @@ function loadPrimitiveModel(modelData) {
 }
 
 function loadModels() {
+  const loadPromises = [];
+  
   sceneData.models.forEach(modelData => {
-    let obj = null;
+    const loadPromise = new Promise((resolve) => {
+      if (modelData.sourceFile && modelData.sourceFile.toLowerCase().endsWith('.glb')) {
+        loadGLBModel(modelData, (loadedObj) => {
+          if (loadedObj) {
+            models.push({ object: loadedObj, modelData });
+          }
+          resolve();
+        });
+      } else {
+        const obj = loadPrimitiveModel(modelData);
+        models.push({ object: obj, modelData });
+        resolve();
+      }
+    });
     
-    if (modelData.sourceFile && modelData.sourceFile.toLowerCase().endsWith('.glb')) {
-      loadGLBModel(modelData, (loadedObj) => {
-        if (loadedObj) {
-          models.push({ object: loadedObj, modelData });
-        }
-      });
-    } else {
-      obj = loadPrimitiveModel(modelData);
-      models.push({ object: obj, modelData });
-    }
+    loadPromises.push(loadPromise);
   });
 
-  // Recreate groups
-  sceneData.groups.forEach(groupData => {
-    const groupObjects = groupData.objectIds
-      .map(id => models[id]?.object)
-      .filter(obj => obj !== undefined);
-    
-    if (groupObjects.length > 0) {
-      groups.push({
-        id: groupData.id,
-        name: groupData.name,
-        objects: groupObjects
-      });
-    }
+  // Wait for all models to load before creating groups
+  Promise.all(loadPromises).then(() => {
+    sceneData.groups.forEach(groupData => {
+      const groupObjects = groupData.objectIds
+        .map(id => models[id]?.object)
+        .filter(obj => obj !== undefined);
+      
+      if (groupObjects.length > 0) {
+        groups.push({
+          id: groupData.id,
+          name: groupData.name,
+          objects: groupObjects,
+          sourceFile: groupData.sourceFile
+        });
+        console.log('Group created:', groupData.name, 'with', groupObjects.length, 'objects');
+      }
+    });
   });
 }
 

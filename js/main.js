@@ -740,13 +740,16 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
     const scene = gltf.scene;
 
     // Function to flatten the hierarchy and extract all meshes
+    // In the GLTFLoader callback in main.js, update the mesh extraction:
     const extractAllMeshes = (object, matrix = new THREE.Matrix4()) => {
       const meshes = [];
       const currentMatrix = matrix.clone().multiply(object.matrix);
 
-      // If this object is a mesh, add it to our list
       if (object.isMesh) {
         const clone = object.clone();
+
+        // Store the original transformation matrix for proper export
+        const originalMatrix = currentMatrix.clone();
 
         // Apply the accumulated transformation
         clone.applyMatrix4(currentMatrix);
@@ -760,7 +763,17 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
         clone.updateMatrix();
         clone.updateMatrixWorld();
 
-        meshes.push({ object: clone, originalName: object.name });
+        meshes.push({
+          object: clone,
+          originalName: object.name,
+          originalMatrix: originalMatrix.toArray(), // Store original transformation
+          originalMaterial: object.material ? {
+            color: object.material.color ? object.material.color.getHexString() : null,
+            wireframe: object.material.wireframe || false,
+            transparent: object.material.transparent || false,
+            opacity: object.material.opacity || 1.0
+          } : null
+        });
       }
 
       // Process all children recursively
@@ -785,6 +798,7 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
     const group = createGroupFromFile(file.name, allMeshes);
 
     // Add each mesh as a separate object
+    // In the GLTFLoader callback, when adding to models array:
     allMeshes.forEach((meshData, index) => {
       const mesh = meshData.object;
 
@@ -794,18 +808,22 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
       // Set up mesh properties
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.userData.groupId = group.id; // Store group reference
+      mesh.userData.groupId = group.id;
       mesh.userData.isPartOfGroup = true;
+
       // Add to scene
       viewer.threeScene.add(mesh);
 
-      // Add to models list
+      // Add to models list with all necessary data for proper export
       models.push({
         name: mesh.name,
         object: mesh,
         showTooltip: true,
         sourceFile: file.name,
-        groupId: group.id
+        groupId: group.id,
+        isGLBPart: true,
+        originalMatrix: meshData.originalMatrix, // Store original transformation
+        originalMaterial: meshData.originalMaterial // Store original material properties
       });
     });
 
