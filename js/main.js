@@ -5,8 +5,9 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import GUI from 'lil-gui';
 import { exportScene } from './export.js';
 import { createGUI } from './gui.js';
-
-// Make THREE available globally for GaussianSplats3D
+import {createTransformGizmo} from './gizmo.js';
+import {styleTag} from './styles.js'
+import { sidebar } from './sidebar.js';
 window.THREE = THREE;
 
 const camera = new THREE.PerspectiveCamera(
@@ -50,164 +51,7 @@ let selectedAxis = null;
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-const styleTag = document.createElement('style');
-styleTag.innerHTML = `
-  :root {
-    --sidebar-w: 260px;
-    --bg: #111214;
-    --panel: #15161a;
-    --muted: #9aa0a6;
-    --accent: #7bd389;
-    --glass: rgba(255,255,255,0.03);
-  }
-  body { margin: 0; font-family: Inter, Roboto, system-ui, -apple-system; background: #000; }
-  .hp-sidebar {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: var(--sidebar-w);
-    height: 100%;
-    background: linear-gradient(180deg, var(--panel), #0f1113);
-    color: #e6eef4;
-    box-shadow: 2px 0 18px rgba(0,0,0,0.7);
-    padding: 14px;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    z-index: 30;
-  }
-  .hp-header { display:flex; align-items:center; gap:10px; }
-  .hp-title { font-weight:600; font-size:16px; }
-  .hp-sub { color: var(--muted); font-size:12px; }
-  .hp-controls { display:flex; gap:8px; }
-  .hp-btn {
-    background: var(--glass);
-    border: 1px solid rgba(255,255,255,0.04);
-    color: inherit;
-    padding:8px 10px;
-    border-radius:8px;
-    cursor:pointer;
-    font-size:13px;
-  }
-  .hp-btn.primary { background: linear-gradient(90deg,var(--accent), #6dd3b2); color: #05120b; font-weight:600; }
-  .hp-section { background: rgba(255,255,255,0.02); border-radius:10px; padding:10px; }
-  .hp-list { max-height: 320px; overflow:auto; display:flex; flex-direction:column; gap:8px; margin-top:8px; }
-  .model-item {
-    display:flex; align-items:center; justify-content:space-between;
-    gap:8px; padding:8px; border-radius:8px; cursor:pointer;
-    background: transparent;
-  }
-  .model-item:hover { background: rgba(255,255,255,0.02); }
-  .model-item .name { font-size:13px; color:#e6eef4; }
-  .model-item .actions { display:flex; gap:6px; }
-  .small-btn { padding:6px 8px; border-radius:7px; font-size:12px; border: none; cursor:pointer; background: rgba(255,255,255,0.02); color: var(--muted); }
-  .small-btn.danger { color: #ff8b8b; }
-  .hp-footer { margin-top:auto; display:flex; gap:8px; }
-  .file-input { display:none; }
-  .hp-tooltip {
-    position: absolute;
-    pointer-events: auto;
-    background: rgba(10,11,12,0.9);
-    color: #fff;
-    padding: 10px 12px;
-    border-radius: 8px;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.6);
-    transform: translate(-50%, -100%);
-    z-index: 60;
-    min-width: 180px;
-  }
-  .hp-tooltip h4 { margin:0 0 6px 0; font-size:13px; }
-  .hp-tooltip p { margin:0 0 8px 0; font-size:12px; color:var(--muted); }
-  .hp-tooltip button { border-radius:6px; padding:6px 8px; border: none; cursor:pointer; background: var(--accent); color:#052018; font-weight:600; }
-  .tooltip-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .tooltip-toggle input[type="checkbox"] {
-    margin: 0;
-  }
-  .transform-controls {
-    position: absolute;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 10px;
-    background: var(--panel);
-    padding: 10px;
-    border-radius: 8px;
-    z-index: 40;
-  }
-  .transform-btn {
-    background: var(--glass);
-    border: 1px solid rgba(255,255,255,0.1);
-    color: white;
-    padding: 8px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 12px;
-  }
-  .transform-btn.active {
-    background: var(--accent);
-    color: #052018;
-    font-weight: 600;
-  }
-`;
 document.head.appendChild(styleTag);
-
-const sidebar = document.createElement('aside');
-sidebar.className = 'hp-sidebar';
-sidebar.innerHTML = `
-  <div class="hp-header">
-    <div>
-      <div class="hp-title">Gaussian 3D Editor</div>
-      <div class="hp-sub">Scene editor • Bonsai</div>
-    </div>
-  </div>
-
-  <div class="hp-section">
-    <div style="display:flex;justify-content:space-between;align-items:center;">
-      <div style="font-weight:600">Scene</div>
-      <div class="hp-controls">
-        <button id="addSelectableBtn" class="hp-btn">Add Cube</button>
-        <button id="exportBtnSidebar" class="hp-btn primary">Export</button>
-      </div>
-    </div>
-    <div style="margin-top:8px; font-size:12px; color:var(--muted);">
-      Click objects to select. Dragging is available via gizmo.
-    </div>
-  </div>
-
-  <div class="hp-section" id="modelsSection">
-    <div style="font-weight:600">Models</div>
-    <div class="hp-list" id="modelsList"></div>
-  </div>
-
-  <div class="hp-section">
-    <div style="display:flex;justify-content:space-between;align-items:center;">
-      <div style="font-weight:600">Import</div>
-      <label class="hp-btn" style="margin-left:8px;">
-        <input id="glbFileInput" class="file-input" type="file" accept=".glb" />
-        Load GLB
-      </label>
-    </div>
-    <div style="margin-top:8px; font-size:12px; color:var(--muted);">Supported: .glb</div>
-  </div>
-
-  <div class='hp-section'>
-    <div style="font-weight:600">Selected</div>
-    <div id="selectedInfo" style="margin-top:8px; font-size:13px; color:var(--muted)">None</div>
-  </div>
-
-  <div class="hp-footer">
-    <button id="centerCameraBtn" class="hp-btn">Center Camera</button>
-    <button id="resetSceneBtn" class="hp-btn">Reset</button>
-  </div>
-`;
 document.body.appendChild(sidebar);
 
 const tooltip = document.createElement('div');
@@ -218,49 +62,7 @@ document.body.appendChild(tooltip);
 const tooltips = new Map();
 
 // Transform Gizmo Functions
-function createTransformGizmo() {
-  const gizmo = new THREE.Group();
-  
-  const axes = [
-    { color: 0xff0000, direction: new THREE.Vector3(1, 0, 0), name: 'x' },
-    { color: 0x00ff00, direction: new THREE.Vector3(0, 1, 0), name: 'y' },
-    { color: 0x0000ff, direction: new THREE.Vector3(0, 0, 1), name: 'z' }
-  ];
-  
-  axes.forEach(axis => {
-    // Arrow
-    const arrow = new THREE.ArrowHelper(
-      axis.direction,
-      new THREE.Vector3(0, 0, 0),
-      1,
-      axis.color,
-      0.3,
-      0.2
-    );
-    arrow.userData.axis = axis.name;
-    gizmo.add(arrow);
-    
-    // Handle (invisible cylinder for picking)
-    const handleGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.8, 8);
-    const handleMaterial = new THREE.MeshBasicMaterial({ 
-      color: axis.color,
-      transparent: true,
-      opacity: 0.5,
-      visible: false
-    });
-    const handle = new THREE.Mesh(handleGeometry, handleMaterial);
-    handle.position.copy(axis.direction.clone().multiplyScalar(0.4));
-    handle.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),
-      axis.direction.clone().normalize()
-    );
-    handle.userData.axis = axis.name;
-    handle.userData.isHandle = true;
-    gizmo.add(handle);
-  });
-  
-  return gizmo;
-}
+
 
 function setupTransformGizmo() {
   transformGizmo = createTransformGizmo();
