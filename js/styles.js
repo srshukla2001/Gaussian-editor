@@ -339,4 +339,21 @@ styleTag.innerHTML = `
     font-weight: 500;
     border-color: var(--accent);
   }
+    .group-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.group-item:hover {
+  background-color: var(--bg-secondary);
+}
+
+.group-item .name {
+  font-weight: 500;
+  margin-bottom: 2px;
+}
 `;
