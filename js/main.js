@@ -1,6 +1,7 @@
 import * as GaussianSplats3D from '../lib/gaussian-splats-3d.module.js';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import GUI from 'lil-gui';
 import { exportScene } from './export.js';
 import { createGUI } from './gui.js';
@@ -32,6 +33,9 @@ const viewer = new GaussianSplats3D.Viewer({
 
 const splatPath = '../assets/data/bonsai/bonsai.ksplat';
 const loader = new GLTFLoader();
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+loader.setDRACOLoader(dracoLoader);
 const models = [];
 const mixers = [];
 let selectedModel = null;
