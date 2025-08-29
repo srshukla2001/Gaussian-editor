@@ -89,7 +89,7 @@ onhover: Show when mouse hovers over object
 onclick: Show when object is clicked (toggle)
 
 always: Always visible (can be overridden by API)
-
+```javascript
 // Hide specific tooltip
 hideTooltip('Box');
 
@@ -104,7 +104,7 @@ const allTooltips = listTooltips();
 allTooltips.forEach(tooltip => {
     console.log(`${tooltip.name}: ${tooltip.visible ? 'Visible' : 'Hidden'}`);
 });
-
+```
 🎨 Editor Interface
 Sidebar Controls
 
