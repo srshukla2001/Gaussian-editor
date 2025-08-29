@@ -36,6 +36,7 @@ export function exportScene(splatPath, models, groups) {
         rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
         scale: o.scale.toArray(),
         showTooltip: m.showTooltip !== false,
+        tooltipTrigger: m.tooltipTrigger || 'onclick', // Default to onclick as in main app
         groupId: m.groupId || null,
         sourceFile: m.sourceFile || null,
         isGLBPart: m.isGLBPart || false,
@@ -151,6 +152,9 @@ const mixers = [];
 const clock = new THREE.Clock();
 const tooltips = new Map();
 const tmpProj = new THREE.Vector3();
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let lastHovered = null;
 let viewer = null;
 let sceneData = null;
 let camera = null;
@@ -167,12 +171,19 @@ function createTooltipForModel(model, modelData) {
   const buttonText = modelData?.buttonText || "Select";
   
   tooltip.innerHTML = \`<h4>\${name}</h4><p>\${description}</p><button>\${buttonText}</button>\`;
-  tooltip.style.display = modelData.showTooltip ? 'block' : 'none';
+  
+  // Set initial visibility based on trigger type
+  const trigger = modelData.tooltipTrigger || 'onclick';
+  if (trigger === 'always') {
+    tooltip.style.display = 'block';
+  } else {
+    tooltip.style.display = 'none';
+  }
+  
   document.body.appendChild(tooltip);
   
   tooltip.querySelector('button').addEventListener('click', () => {
     console.log('Selected model:', name);
-    // Focus camera on the selected model
     if (camera && viewer && viewer.controls) {
       const boundingBox = new THREE.Box3().setFromObject(model);
       const center = boundingBox.getCenter(new THREE.Vector3());
@@ -186,7 +197,11 @@ function createTooltipForModel(model, modelData) {
     }
   });
   
-  return tooltip;
+  return { 
+    tooltip, 
+    visible: trigger === 'always',
+    trigger: trigger
+  };
 }
 
 function updateTooltipPosition(tooltip, worldPos) {
@@ -216,6 +231,15 @@ function updateTooltipPosition(tooltip, worldPos) {
   }
 }
 
+function hideAllOnclickTooltips() {
+  tooltips.forEach((tooltipData, model) => {
+    if (tooltipData.trigger === 'onclick' && tooltipData.visible) {
+      tooltipData.visible = false;
+      tooltipData.tooltip.style.display = 'none';
+    }
+  });
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
@@ -224,8 +248,15 @@ function animate() {
   if (camera) {
     tooltips.forEach((tooltipData, model) => {
       try {
-        const { tooltip, modelData } = tooltipData;
-        if (modelData.showTooltip) {
+        const { tooltip, trigger, visible } = tooltipData;
+        if (visible) {
+          const anchor = new THREE.Vector3();
+          model.getWorldPosition(anchor);
+          updateTooltipPosition(tooltip, anchor);
+        } else if (trigger === 'always') {
+          // Ensure always-visible tooltips stay visible
+          tooltipData.visible = true;
+          tooltip.style.display = 'block';
           const anchor = new THREE.Vector3();
           model.getWorldPosition(anchor);
           updateTooltipPosition(tooltip, anchor);
@@ -324,8 +355,13 @@ function loadGLBModel(modelData, onComplete) {
     scene.add(obj);
 
     if (modelData.showTooltip) {
-      const tooltip = createTooltipForModel(obj, modelData);
-      tooltips.set(obj, { tooltip, modelData });
+      const wrapper = createTooltipForModel(obj, modelData);
+      tooltips.set(obj, { 
+        tooltip: wrapper.tooltip, 
+        modelData, 
+        visible: wrapper.visible, 
+        trigger: wrapper.trigger 
+      });
     }
 
     if (gltf.animations && gltf.animations.length > 0) {
@@ -383,8 +419,13 @@ function loadPrimitiveModel(modelData) {
   scene.add(obj);
 
   if (modelData.showTooltip) {
-    const tooltip = createTooltipForModel(obj, modelData);
-    tooltips.set(obj, { tooltip, modelData });
+    const wrapper = createTooltipForModel(obj, modelData);
+    tooltips.set(obj, { 
+      tooltip: wrapper.tooltip, 
+      modelData, 
+      visible: wrapper.visible, 
+      trigger: wrapper.trigger 
+    });
   }
 
   return obj;
@@ -487,6 +528,104 @@ fetch('scene.json')
       // Load custom models
       loadModels();
 
+      // Setup pointer handlers for tooltip triggers
+      const canvas = viewer.renderer && viewer.renderer.domElement;
+      if (canvas) {
+        canvas.style.touchAction = 'none';
+        
+        // Hover handler for onhover triggers
+        canvas.addEventListener('pointermove', (ev) => {
+          mouse.x = (ev.clientX / window.innerWidth) * 2 - 1;
+          mouse.y = -(ev.clientY / window.innerHeight) * 2 + 1;
+          raycaster.setFromCamera(mouse, camera);
+          
+          const intersects = raycaster.intersectObjects(scene.children, true)
+            .filter(i => !i.object.isGaussianSplatMesh);
+          
+          let hoveredObject = null;
+          let hoveredTooltipData = null;
+          
+          // Find the first object that has a tooltip with onhover trigger
+          for (const intersect of intersects) {
+            const obj = intersect.object;
+            const tooltipData = tooltips.get(obj);
+            if (tooltipData && tooltipData.trigger === 'onhover') {
+              hoveredObject = obj;
+              hoveredTooltipData = tooltipData;
+              break;
+            }
+          }
+          
+          // Handle onhover tooltips
+          if (hoveredObject && hoveredTooltipData) {
+            // Hide previous hovered tooltip if different
+            if (lastHovered && lastHovered !== hoveredObject) {
+              const prevTooltipData = tooltips.get(lastHovered);
+              if (prevTooltipData && prevTooltipData.trigger === 'onhover') {
+                prevTooltipData.visible = false;
+                prevTooltipData.tooltip.style.display = 'none';
+              }
+            }
+            
+            // Show current hovered tooltip
+            hoveredTooltipData.visible = true;
+            hoveredTooltipData.tooltip.style.display = 'block';
+            const anchor = new THREE.Vector3();
+            hoveredObject.getWorldPosition(anchor);
+            updateTooltipPosition(hoveredTooltipData.tooltip, anchor);
+            
+            lastHovered = hoveredObject;
+          } else {
+            // No valid hover object found, hide any visible onhover tooltips
+            if (lastHovered) {
+              const prevTooltipData = tooltips.get(lastHovered);
+              if (prevTooltipData && prevTooltipData.trigger === 'onhover') {
+                prevTooltipData.visible = false;
+                prevTooltipData.tooltip.style.display = 'none';
+              }
+              lastHovered = null;
+            }
+          }
+        });
+
+        // Click handler for onclick-type tooltips (toggle)
+        canvas.addEventListener('click', (ev) => {
+          mouse.x = (ev.clientX / window.innerWidth) * 2 - 1;
+          mouse.y = -(ev.clientY / window.innerHeight) * 2 + 1;
+          raycaster.setFromCamera(mouse, camera);
+          
+          const intersects = raycaster.intersectObjects(scene.children, true)
+            .filter(i => !i.object.isGaussianSplatMesh);
+          
+          if (intersects.length > 0) {
+            const obj = intersects[0].object;
+            const tooltipData = tooltips.get(obj);
+            
+            if (tooltipData && tooltipData.trigger === 'onclick') {
+              // Toggle visibility
+              tooltipData.visible = !tooltipData.visible;
+              tooltipData.tooltip.style.display = tooltipData.visible ? 'block' : 'none';
+              
+              if (tooltipData.visible) {
+                const anchor = new THREE.Vector3();
+                obj.getWorldPosition(anchor);
+                updateTooltipPosition(tooltipData.tooltip, anchor);
+              }
+            }
+          } else {
+            // Clicked on empty space, hide all onclick tooltips
+            hideAllOnclickTooltips();
+          }
+        });
+
+        // Hide onclick tooltips when clicking outside the canvas
+        document.addEventListener('mousedown', (e) => {
+          if (!canvas.contains(e.target)) {
+            hideAllOnclickTooltips();
+          }
+        });
+      }
+
       // Start animation loop
       animate();
 
@@ -494,11 +633,10 @@ fetch('scene.json')
       window.addEventListener('resize', () => {
         tooltips.forEach((tooltipData, model) => {
           try {
-            const { tooltip, modelData } = tooltipData;
-            if (modelData.showTooltip) {
+            if (tooltipData.visible) {
               const anchor = new THREE.Vector3();
               model.getWorldPosition(anchor);
-              updateTooltipPosition(tooltip, anchor);
+              updateTooltipPosition(tooltipData.tooltip, anchor);
             }
           } catch (e) {}
         });
