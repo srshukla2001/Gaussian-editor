@@ -102,6 +102,7 @@ styleTag.innerHTML = `
 
   .hp-section { 
     max-height: 350px;
+    min-height: 110px;
     background: var(--header-bg); 
     border-radius: 6px; 
     border: 1px solid var(--border);

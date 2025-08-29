@@ -71,15 +71,6 @@ document.body.appendChild(tooltip);
 const tooltips = new Map();
 
 
-const groupsSection = document.createElement('div');
-groupsSection.className = 'sidebar-section';
-groupsSection.innerHTML = `
-  <div class="section-header">
-    <h3>Groups</h3>
-  </div>
-  <div id="groupsList" class="section-content"></div>
-`;
-sidebar.insertBefore(groupsSection, sidebar.querySelector('.sidebar-section:nth-child(2)'));
 
 
 function createGroupFromFile(filename, meshes) {
