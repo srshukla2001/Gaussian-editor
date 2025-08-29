@@ -101,10 +101,11 @@ styleTag.innerHTML = `
   }
 
   .hp-section { 
+    max-height: 350px;
     background: var(--header-bg); 
     border-radius: 6px; 
     border: 1px solid var(--border);
-    overflow: hidden;
+    overflow: auto;
   }
 
   .hp-section-header {
@@ -123,7 +124,6 @@ styleTag.innerHTML = `
   }
 
   .hp-list { 
-    max-height: 320px; 
     overflow: auto; 
     display: flex; 
     flex-direction: column; 
@@ -132,6 +132,7 @@ styleTag.innerHTML = `
 
   .model-item {
     display: flex; 
+    flex-direction: column;
     align-items: center; 
     justify-content: space-between;
     gap: 8px; 
@@ -153,7 +154,7 @@ styleTag.innerHTML = `
   }
 
   .model-item .name { 
-    color: #cccccc; 
+    color: #ffffffff; 
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
