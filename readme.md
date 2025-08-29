@@ -66,7 +66,7 @@ orbitAround([0, 1, 0], 10, 0, Math.PI * 2, 5000);
 // Get current camera state
 const cameraState = getCameraState();
 console.log('Camera position:', cameraState.position);
-
+```
 💬 Tooltip API
 
 The Tooltip API manages interactive information displays for 3D objects with various trigger modes.
