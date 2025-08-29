@@ -60,6 +60,7 @@ let selectedAxis = null;
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
+let lastHoveredModel = null; // NEW: track last hovered model for hover-triggered tooltips
 
 document.head.appendChild(styleTag);
 document.body.appendChild(sidebar);
@@ -276,8 +277,13 @@ function onMouseDown(event) {
     const clickedObject = validIntersects[0].object;
 
     // Check if this object belongs to a group
-    if (clickedObject.userData && clickedObject.userData.groupId) {
-      const groupId = clickedObject.userData.groupId;
+    // walk up to find group info if a child mesh was clicked
+    let groupOwner = clickedObject;
+    while (groupOwner && !groupOwner.userData.groupId) {
+      groupOwner = groupOwner.parent;
+    }
+    if (groupOwner && groupOwner.userData && groupOwner.userData.groupId) {
+      const groupId = groupOwner.userData.groupId;
       const group = groups.find(g => g.id === groupId);
 
       if (group) {
@@ -286,10 +292,25 @@ function onMouseDown(event) {
       }
     }
 
-    // If not part of a group, select the individual object
-    const modelData = models.find(m => m.object === clickedObject);
+    // If not part of a group, select the individual object (walk up to find model entry)
+    const modelData = findModelEntryForObject(clickedObject);
     if (modelData) {
-      selectModel(clickedObject);
+      // If this model uses 'onclick' trigger, toggle tooltip visibility using wrapper lookup that climbs parents
+      if (modelData.showTooltip !== false && modelData.tooltipTrigger === 'onclick') {
+        const wrapper = findTooltipWrapperForObject(clickedObject);
+        if (wrapper) {
+          wrapper.visible = !wrapper.visible;
+          wrapper.el.style.display = wrapper.visible ? 'block' : 'none';
+          if (wrapper.visible) {
+            const anchor = new THREE.Vector3();
+            // ensure we position at the model's world position (use stored model object)
+            modelData.object.getWorldPosition(anchor);
+            updateTooltipPosition(wrapper.el, anchor);
+          }
+        }
+      }
+
+      selectModel(modelData.object);
     }
   } else {
     // Clicked on empty space, deselect everything
@@ -306,18 +327,68 @@ function onMouseDown(event) {
       } catch (e) { }
       gui = null;
     }
+
+    // hide any onclick tooltips when user clicks anywhere else
+    hideAllOnclickTooltips();
   }
 }
 
 function onMouseMove(event) {
+  // compute normalized mouse for both dragging logic and hover detection
+  const mouseN = new THREE.Vector2();
+  mouseN.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouseN.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  // Hover detection (only when not dragging)
+  if (!isDragging) {
+    raycaster.setFromCamera(mouseN, viewer.camera);
+    const sceneIntersects = raycaster.intersectObjects(viewer.threeScene.children, true);
+    const validIntersects = sceneIntersects.filter(intersect =>
+      !intersect.object.userData?.isHandle &&
+      !intersect.object.isGaussianSplatMesh
+    );
+
+    if (validIntersects.length > 0) {
+      const hoveredObject = validIntersects[0].object;
+      const modelData = findModelEntryForObject(hoveredObject);
+
+      if (modelData && modelData.showTooltip !== false && modelData.tooltipTrigger === 'onhover') {
+        // show hovered tooltip - find wrapper by climbing parent chain
+        if (lastHoveredModel && lastHoveredModel !== modelData.object) {
+          const lastWrap = tooltips.get(lastHoveredModel);
+          if (lastWrap) { lastWrap.el.style.display = 'none'; lastWrap.visible = false; }
+        }
+        const wrapper = findTooltipWrapperForObject(hoveredObject);
+        if (wrapper) {
+          wrapper.visible = true;
+          wrapper.el.style.display = 'block';
+          const anchor = new THREE.Vector3();
+          modelData.object.getWorldPosition(anchor);
+          updateTooltipPosition(wrapper.el, anchor);
+          lastHoveredModel = modelData.object;
+        }
+      } else {
+        // Not a hoverable model -> hide previously hovered tooltip
+        if (lastHoveredModel) {
+          const lastWrap = tooltips.get(lastHoveredModel);
+          if (lastWrap) { lastWrap.el.style.display = 'none'; lastWrap.visible = false; }
+          lastHoveredModel = null;
+        }
+      }
+    } else {
+      if (lastHoveredModel) {
+        const lastWrap = tooltips.get(lastHoveredModel);
+        if (lastWrap) { lastWrap.el.style.display = 'none'; lastWrap.visible = false; }
+        lastHoveredModel = null;
+      }
+    }
+  }
+
+  // If dragging, fallback to original translation logic
   if (!isDragging || !selectedAxis) return;
 
-  const mouse = new THREE.Vector2();
-  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-  const raycaster = new THREE.Raycaster();
-  raycaster.setFromCamera(mouse, viewer.camera);
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(mouseN, viewer.camera);
 
   const plane = new THREE.Plane();
   const axisVector = new THREE.Vector3();
@@ -334,7 +405,7 @@ function onMouseMove(event) {
   plane.setFromNormalAndCoplanarPoint(cross, dragStartPoint);
 
   const intersection = new THREE.Vector3();
-  raycaster.ray.intersectPlane(plane, intersection);
+  ray.ray.intersectPlane(plane, intersection);
 
   const delta = new THREE.Vector3().subVectors(intersection, dragStartPoint);
 
@@ -354,14 +425,6 @@ function onMouseMove(event) {
 
   dragStartPoint.copy(intersection);
   updateSelectedInfo();
-}
-
-function onMouseUp() {
-  isDragging = false;
-  selectedAxis = null;
-  if (viewer.controls) {
-    viewer.controls.enabled = true;
-  }
 }
 
 const tooltipInputStyle = document.createElement('style');
@@ -403,21 +466,22 @@ tooltipInputStyle.textContent = `
 document.head.appendChild(tooltipInputStyle);
 
 function updateTooltipContent(model) {
-  if (tooltips.has(model)) {
-    const tooltip = tooltips.get(model);
-    const modelData = models.find(m => m.object === model);
+  const wrapper = tooltips.get(model);
+  const modelData = models.find(m => m.object === model);
+  if (!wrapper) return;
 
-    const name = modelData?.name || model.name || model.type;
-    const description = modelData?.description || `Description for ${name}`;
-    const buttonText = modelData?.buttonText || "Select";
+  const tooltip = wrapper.el;
 
-    tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p><button>${buttonText}</button>`;
+  const name = modelData?.name || model.name || model.type;
+  const description = modelData?.description || `Description for ${name}`;
+  const buttonText = modelData?.buttonText || "Select";
 
-    // Reattach event listener
-    tooltip.querySelector('button').addEventListener('click', () => {
-      selectModel(model);
-    });
-  }
+  tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p><button>${buttonText}</button>`;
+
+  // Reattach event listener
+  tooltip.querySelector('button').addEventListener('click', () => {
+    selectModel(model);
+  });
 }
 
 function createModelItem(m, index) {
@@ -489,6 +553,54 @@ function createModelItem(m, index) {
   left.appendChild(descInput);
   left.appendChild(buttonInput);
 
+  // Tooltip trigger dropdown (hidden unless tooltip enabled)
+  const triggerLabel = document.createElement('label');
+  triggerLabel.style.marginTop = '6px';
+  triggerLabel.style.fontSize = '12px';
+  triggerLabel.style.color = 'var(--muted)';
+  triggerLabel.textContent = 'Tooltip Trigger:';
+
+  const triggerSelect = document.createElement('select');
+  triggerSelect.className = 'tooltip-input';
+  const optHover = document.createElement('option');
+  optHover.value = 'onhover';
+  optHover.textContent = 'onhover';
+  const optClick = document.createElement('option');
+  optClick.value = 'onclick';
+  optClick.textContent = 'onclick';
+  const optAlways = document.createElement('option');
+  optAlways.value = 'always';
+  optAlways.textContent = 'always';
+  triggerSelect.appendChild(optHover);
+  triggerSelect.appendChild(optClick);
+  triggerSelect.appendChild(optAlways);
+  // default to 'onclick' if not specified
+  triggerSelect.value = m.tooltipTrigger || 'onclick';
+  triggerSelect.addEventListener('change', (e) => {
+    m.tooltipTrigger = e.target.value;
+    // If tooltip exists, update stored trigger
+    const wrapper = tooltips.get(m.object);
+    if (wrapper) {
+      wrapper.trigger = m.tooltipTrigger;
+      // if changed to always, show immediately; else hide and let handlers control
+      if (wrapper.trigger === 'always') {
+        wrapper.visible = true;
+        wrapper.el.style.display = 'block';
+        const anchor = new THREE.Vector3();
+        m.object.getWorldPosition(anchor);
+        updateTooltipPosition(wrapper.el, anchor);
+      } else {
+        wrapper.el.style.display = 'none';
+        wrapper.visible = false;
+      }
+    }
+  });
+  // Initially show/hide trigger selector based on checkbox state
+  triggerLabel.style.display = (m.showTooltip !== false) ? 'block' : 'none';
+  triggerSelect.style.display = (m.showTooltip !== false) ? 'block' : 'none';
+  left.appendChild(triggerLabel);
+  left.appendChild(triggerSelect);
+
   const actions = document.createElement('div');
   actions.className = 'actions';
 
@@ -499,7 +611,23 @@ function createModelItem(m, index) {
   toggleCheckbox.checked = m.showTooltip !== false;
   toggleCheckbox.addEventListener('change', (e) => {
     m.showTooltip = e.target.checked;
-    updateTooltipVisibility(m.object, m.showTooltip);
+    // Show or hide the dropdown based on checkbox
+    triggerLabel.style.display = e.target.checked ? 'block' : 'none';
+    triggerSelect.style.display = e.target.checked ? 'block' : 'none';
+    updateTooltipVisibility(m.object, m.showTooltip !== false);
+    // If enabling, create wrapper right away in case trigger is 'always'
+    if (m.showTooltip && !tooltips.has(m.object)) {
+      const wrapper = createTooltipForModel(m.object);
+      wrapper.trigger = m.tooltipTrigger || 'onclick';
+      tooltips.set(m.object, wrapper);
+      if (wrapper.trigger === 'always') {
+        wrapper.visible = true;
+        wrapper.el.style.display = 'block';
+        const anchor = new THREE.Vector3();
+        m.object.getWorldPosition(anchor);
+        updateTooltipPosition(wrapper.el, anchor);
+      }
+    }
   });
   const toggleLabel = document.createElement('span');
   toggleLabel.textContent = 'Tooltip';
@@ -635,6 +763,7 @@ function updateSelectedInfo() {
   }
 }
 
+// ...existing code inside createTooltipForModel ...
 function createTooltipForModel(model) {
   const modelData = models.find(m => m.object === model);
   const tooltip = document.createElement('div');
@@ -645,30 +774,44 @@ function createTooltipForModel(model) {
   const buttonText = modelData?.buttonText || "Select";
 
   tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p><button>${buttonText}</button>`;
-  tooltip.style.display = 'block';
+  // Do not show by default; visibility will be controlled by trigger behavior
+  tooltip.style.display = 'none';
   document.body.appendChild(tooltip);
 
   tooltip.querySelector('button').addEventListener('click', () => {
     selectModel(model);
   });
 
-  return tooltip;
+  return {
+    el: tooltip,
+    trigger: modelData?.tooltipTrigger || 'onclick', // default to 'onclick'
+    visible: modelData?.tooltipTrigger === 'always' ? true : false
+  };
 }
+// ...existing code...
 
 function removeTooltip(model) {
   if (tooltips.has(model)) {
-    const tooltip = tooltips.get(model);
+    const wrapper = tooltips.get(model);
     try {
-      document.body.removeChild(tooltip);
+      document.body.removeChild(wrapper.el);
     } catch (e) { }
     tooltips.delete(model);
   }
 }
 
-function updateTooltipVisibility(model, visible) {
-  if (tooltips.has(model)) {
-    const tooltip = tooltips.get(model);
-    tooltip.style.display = visible ? 'block' : 'none';
+function updateTooltipVisibility(model, enabled) {
+  // enabled: whether the tooltip feature should be active for this model
+  const wrapper = tooltips.get(model);
+  if (!wrapper) return;
+  if (!enabled) {
+    // disable tooltip feature and hide any visible tooltip
+    wrapper.el.style.display = 'none';
+    wrapper.visible = false;
+  } else {
+    // enabling tooltip feature - leave hidden until trigger fires
+    wrapper.el.style.display = 'none';
+    wrapper.visible = false;
   }
 }
 
@@ -701,21 +844,47 @@ function animate() {
       const anchor = new THREE.Vector3();
       m.object.getWorldPosition(anchor);
 
-      if (!tooltips.has(m.object)) {
-        const tooltip = createTooltipForModel(m.object);
-        tooltips.set(m.object, tooltip);
-        updateTooltipVisibility(m.object, m.showTooltip !== false);
+      // Create tooltip wrapper if tooltip feature is enabled for this model
+      if (m.showTooltip !== false && !tooltips.has(m.object)) {
+        const wrapper = createTooltipForModel(m.object);
+        // ensure wrapper.trigger matches model setting
+        wrapper.trigger = m.tooltipTrigger || 'onclick';
+        tooltips.set(m.object, wrapper);
+        // If 'always' show immediately
+        if (wrapper.trigger === 'always') {
+          wrapper.visible = true;
+          wrapper.el.style.display = 'block';
+          updateTooltipPosition(wrapper.el, anchor);
+        }
       }
 
-      if (m.showTooltip !== false) {
-        const tooltip = tooltips.get(m.object);
-        updateTooltipPosition(tooltip, anchor);
+      // If tooltip was disabled, remove/hide it
+      if (m.showTooltip === false && tooltips.has(m.object)) {
+        const wrapper = tooltips.get(m.object);
+        wrapper.el.style.display = 'none';
+        wrapper.visible = false;
+      }
+
+      // Keep 'always' tooltips visible and updated
+      if (tooltips.has(m.object)) {
+        const wrapper = tooltips.get(m.object);
+        // sync trigger if changed in sidebar
+        wrapper.trigger = m.tooltipTrigger || wrapper.trigger;
+        if (wrapper.trigger === 'always') {
+          wrapper.visible = true;
+          wrapper.el.style.display = 'block';
+          updateTooltipPosition(wrapper.el, anchor);
+        } else if (wrapper.visible) {
+          // update position only when visible (hover or onclick toggled)
+          updateTooltipPosition(wrapper.el, anchor);
+        }
       }
     } catch (e) { }
   });
 }
 animate();
 
+// ...existing code for addSelectableBtn ...
 document.getElementById('addSelectableBtn').addEventListener('click', () => {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const material = new THREE.MeshBasicMaterial({
@@ -727,7 +896,8 @@ document.getElementById('addSelectableBtn').addEventListener('click', () => {
   cube.position.set(0, 0.5, 0);
 
   viewer.threeScene.add(cube);
-  models.push({ name: cube.name, object: cube, showTooltip: true });
+  // default trigger is 'onclick' per request
+  models.push({ name: cube.name, object: cube, showTooltip: true, tooltipTrigger: 'onclick' });
   refreshSidebarList();
   selectModel(cube);
 });
@@ -815,10 +985,12 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
       viewer.threeScene.add(mesh);
 
       // Add to models list with all necessary data for proper export
+      // ...existing code inside glb loader where models.push is called ...
       models.push({
         name: mesh.name,
         object: mesh,
         showTooltip: true,
+        tooltipTrigger: 'onclick', // NEW default
         sourceFile: file.name,
         groupId: group.id,
         isGLBPart: true,
@@ -919,10 +1091,11 @@ viewer.addSplatScene(splatPath, { progressiveLoad: false, useFrustumCulling: tru
   window.addEventListener('resize', () => {
     models.forEach(m => {
       try {
-        if (tooltips.has(m.object) && m.showTooltip !== false) {
+        const wrapper = tooltips.get(m.object);
+        if (wrapper && m.showTooltip !== false) {
           const anchor = new THREE.Vector3();
           m.object.getWorldPosition(anchor);
-          updateTooltipPosition(tooltips.get(m.object), anchor);
+          updateTooltipPosition(wrapper.el, anchor);
         }
       } catch (e) { }
     });
@@ -931,4 +1104,62 @@ viewer.addSplatScene(splatPath, { progressiveLoad: false, useFrustumCulling: tru
 }).catch(err => {
   console.error('Failed to load splat scene', err);
   alert('Failed to load splat scene. Check console for details.');
+});
+
+// Helper: find model entry or tooltip wrapper by walking up the object parent chain.
+// This fixes cases where intersectObjects returns a child mesh rather than the stored model object.
+function findModelEntryForObject(obj) {
+  let o = obj;
+  while (o) {
+    const m = models.find(m => m.object === o);
+    if (m) return m;
+    o = o.parent;
+  }
+  return null;
+}
+
+function findTooltipWrapperForObject(obj) {
+  let o = obj;
+  while (o) {
+    if (tooltips.has(o)) return tooltips.get(o);
+    o = o.parent;
+  }
+  return null;
+}
+
+// --- ADDED helper to hide onclick tooltips globally ---
+function hideAllOnclickTooltips() {
+  tooltips.forEach((wrapper, model) => {
+    if (wrapper.trigger === 'onclick' && wrapper.visible) {
+      wrapper.visible = false;
+      wrapper.el.style.display = 'none';
+    }
+  });
+}
+
+// --- ADDED onMouseUp referenced by setupTransformGizmo ---
+function onMouseUp(event) {
+  if (isDragging) {
+    isDragging = false;
+    selectedAxis = null;
+    if (viewer.controls) viewer.controls.enabled = true;
+  }
+}
+
+// ensure clicks outside canvas or on arbitrary UI hide onclick tooltips
+document.addEventListener('mousedown', (e) => {
+  // if click is inside a tooltip or inside the sidebar controls, don't automatically hide (so user can interact)
+  if (e.target.closest('.hp-tooltip') || e.target.closest('.sidebar-section') || e.target.closest('.model-item')) return;
+  // if click is inside canvas we let canvas handler manage showing/toggling, but still hide onclicks if the click didn't hit a model
+  if (e.target.closest('canvas')) {
+    // canvas click handling already calls onMouseDown -> but we hide onclick tooltips here only if the event path didn't hit a model
+    // small delay to let onMouseDown run first; then check if any onclick tooltip remains visible and no new model toggled it
+    setTimeout(() => {
+      // if no clicked model toggled an onclick tooltip, hide all onclick tooltips
+      hideAllOnclickTooltips();
+    }, 10);
+    return;
+  }
+  // click outside canvas/tooltip -> hide onclick tooltips
+  hideAllOnclickTooltips();
 });
