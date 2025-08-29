@@ -105,37 +105,37 @@ allTooltips.forEach(tooltip => {
     console.log(`${tooltip.name}: ${tooltip.visible ? 'Visible' : 'Hidden'}`);
 });
 ```
-🎨 Editor Interface
+### 🎨 Editor Interface
 Sidebar Controls
 
-Model Management: Add, remove, and configure 3D objects
+- `Model Management`: Add, remove, and configure 3D objects
 
-Tooltip Settings: Configure name, description, button text, and triggers
+- `Tooltip Settings`: Configure name, description, button text, and triggers
 
-Group Management: Organize objects into groups for collective manipulation
+- `Group Management`: Organize objects into groups for collective manipulation
 
-Export Tools: Generate deployable scenes
+- `Export Tools`: Generate deployable scenes
 
-3D Editor Features
+### 3D Editor Features
 
-Transform Gizmo: Move, rotate, and scale objects visually
+- Transform Gizmo: Move, rotate, and scale objects visually
 
-Real-time Preview: Instant visual feedback for all changes
+- Real-time Preview: Instant visual feedback for all changes
 
-Object Selection: Click to select and manipulate objects
+- Object Selection: Click to select and manipulate objects
 
-Camera Controls: Orbital navigation with mouse/touch
+- Camera Controls: Orbital navigation with mouse/touch
 
-📤 Export System
+### 📤 Export System
 Export Process
 
-Scene Configuration: Set up models, tooltips, and camera positions
+- Scene Configuration: Set up models, tooltips, and camera positions
 
-Validation: Automatic check for missing assets or configurations
+- Validation: Automatic check for missing assets or configurations
 
-Export Generation: Creates standalone HTML file with all dependencies
+- Export Generation: Creates standalone HTML file with all dependencies
 
-Asset Packaging: Bundles all required models and resources
+- Asset Packaging: Bundles all required models and resources
 
 Exported Structure
 export/
