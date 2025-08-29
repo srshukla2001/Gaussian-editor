@@ -16,15 +16,17 @@ A powerful **web-based 3D scene editor** built with **Three.js** and **Gaussian 
 ---
 
 ## 📁 Project Structure
+```
 project/
-├── index.html # Main application
-├── main-app.js # Primary application logic
-├── export.js # Scene export functionality
+├── index.html      # Main application
+├── main-app.js     # Primary application logic
+├── export.js       # Scene export functionality
 ├── api/
-│ ├── camera.js # Camera control API
-│ └── tooltip.js # Tooltip management API
-├── lib/ # Third-party libraries
-└── assets/ # Model and resource files
+│   ├── camera.js   # Camera control API
+│   └── tooltip.js  # Tooltip management API
+├── lib/            # Third-party libraries
+└── assets/         # Model and resource files
+```
 
 
 
@@ -138,13 +140,14 @@ Export Process
 - Asset Packaging: Bundles all required models and resources
 
 Exported Structure
+```
 export/
 ├── index.html              # Standalone viewer
 ├── scene.json              # Scene configuration
 ├── assets/                 # Model files and resources
 ├── lib/                    # Required libraries
 └── api/                    # Camera and Tooltip APIs
-
+```
 Export Options
 
 Full Scene: Complete scene with all models and configurations
