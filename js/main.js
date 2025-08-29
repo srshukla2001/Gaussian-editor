@@ -37,7 +37,11 @@ const viewer = new GaussianSplats3D.Viewer({
   sortEnable: true,
   showLoadingUI: false
 });
-
+if (window.CameraAPI) {
+  window.CameraAPI.init(viewer);
+} else {
+  console.warn('CameraAPI not loaded yet');
+}
 const splatPath = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/SignatureGlobal/TwinTowerDXP/converted_file_spz.ksplat';
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
@@ -46,11 +50,15 @@ loader.setDRACOLoader(dracoLoader);
 const models = [];
 const groups = [];
 const mixers = [];
+const meshes = [];
+const tooltips = new Map();
 let selectedModel = null;
 let selectedGroup = null;
 let gui = null;
 
-
+window.models = models;
+window.tooltips = tooltips;
+window.viewer = viewer;
 let transformGizmo = null;
 let isDragging = false;
 let dragStartPoint = new THREE.Vector3();
@@ -58,7 +66,7 @@ let selectedAxis = null;
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
-let lastHoveredModel = null; 
+let lastHoveredModel = null;
 
 document.head.appendChild(styleTag);
 document.body.appendChild(sidebar);
@@ -67,8 +75,6 @@ const tooltip = document.createElement('div');
 tooltip.className = 'hp-tooltip';
 tooltip.innerHTML = `<h4 id="tipTitle">Title</h4><p id="tipDesc">desc</p><button id="tipBtn">Action</button>`;
 document.body.appendChild(tooltip);
-
-const tooltips = new Map();
 
 
 
@@ -247,7 +253,7 @@ function onMouseDown(event) {
         if (viewer.controls) {
           viewer.controls.enabled = false;
         }
-        return; 
+        return;
       }
     }
   }
@@ -595,7 +601,33 @@ function createModelItem(m, index) {
 
     triggerLabel.style.display = e.target.checked ? 'block' : 'none';
     triggerSelect.style.display = e.target.checked ? 'block' : 'none';
+
+    // FIX: Actually hide/show the tooltip immediately
+    if (e.target.checked) {
+      // Show tooltip if it should be visible based on trigger
+      if (m.tooltipTrigger === 'always') {
+        const wrapper = tooltips.get(m.object);
+        if (wrapper) {
+          wrapper.visible = true;
+          wrapper.el.style.display = 'block';
+          const anchor = new THREE.Vector3();
+          m.object.getWorldPosition(anchor);
+          updateTooltipPosition(wrapper.el, anchor);
+        }
+      }
+    } else {
+      // Hide tooltip immediately
+      const wrapper = tooltips.get(m.object);
+      if (wrapper) {
+        wrapper.visible = false;
+        wrapper.el.style.display = 'none';
+      }
+    }
+
+    // Update tooltip visibility in the animation loop
     updateTooltipVisibility(m.object, m.showTooltip !== false);
+
+    // Create or remove tooltip based on checkbox state
     if (m.showTooltip && !tooltips.has(m.object)) {
       const wrapper = createTooltipForModel(m.object);
       wrapper.trigger = m.tooltipTrigger || 'onclick';
@@ -607,6 +639,9 @@ function createModelItem(m, index) {
         m.object.getWorldPosition(anchor);
         updateTooltipPosition(wrapper.el, anchor);
       }
+    } else if (!m.showTooltip && tooltips.has(m.object)) {
+      // Remove tooltip if checkbox is unchecked
+      removeTooltip(m.object);
     }
   });
   const toggleLabel = document.createElement('span');
@@ -764,7 +799,11 @@ function createTooltipForModel(model) {
   return {
     el: tooltip,
     trigger: modelData?.tooltipTrigger || 'onclick',
-    visible: modelData?.tooltipTrigger === 'always' ? true : false
+    visible: modelData?.tooltipTrigger === 'always' ? true : false,
+    manualControl: false,
+    manualHidden: false,
+    apiOverride: false,    // Add this line
+    apiHidden: false       // Add this line
   };
 }
 
@@ -773,24 +812,37 @@ function removeTooltip(model) {
   if (tooltips.has(model)) {
     const wrapper = tooltips.get(model);
     try {
-      document.body.removeChild(wrapper.el);
-    } catch (e) { }
+      if (wrapper.el && wrapper.el.parentNode) {
+        wrapper.el.parentNode.removeChild(wrapper.el);
+      }
+    } catch (e) {
+      console.error('Error removing tooltip element:', e);
+    }
     tooltips.delete(model);
   }
 }
 
 function updateTooltipVisibility(model, enabled) {
-
   const wrapper = tooltips.get(model);
   if (!wrapper) return;
+
   if (!enabled) {
-
-    wrapper.el.style.display = 'none';
+    // Hide immediately and prevent animation loop from showing it
     wrapper.visible = false;
+    wrapper.el.style.display = 'none';
   } else {
-
-    wrapper.el.style.display = 'none';
-    wrapper.visible = false;
+    // Show based on trigger setting
+    if (wrapper.trigger === 'always') {
+      wrapper.visible = true;
+      wrapper.el.style.display = 'block';
+      const anchor = new THREE.Vector3();
+      model.getWorldPosition(anchor);
+      updateTooltipPosition(wrapper.el, anchor);
+    } else {
+      // For hover/click triggers, let the animation loop handle visibility
+      wrapper.visible = false;
+      wrapper.el.style.display = 'none';
+    }
   }
 }
 
@@ -820,11 +872,20 @@ function animate() {
 
   models.forEach(m => {
     try {
+      // Skip if tooltips are disabled for this model
+      if (m.showTooltip === false) {
+        const wrapper = tooltips.get(m.object);
+        if (wrapper) {
+          wrapper.visible = false;
+          wrapper.el.style.display = 'none';
+        }
+        return; // Skip further processing for this model
+      }
+
       const anchor = new THREE.Vector3();
       m.object.getWorldPosition(anchor);
 
-
-      if (m.showTooltip !== false && !tooltips.has(m.object)) {
+      if (!tooltips.has(m.object)) {
         const wrapper = createTooltipForModel(m.object);
         wrapper.trigger = m.tooltipTrigger || 'onclick';
         tooltips.set(m.object, wrapper);
@@ -835,17 +896,11 @@ function animate() {
         }
       }
 
-
-      if (m.showTooltip === false && tooltips.has(m.object)) {
-        const wrapper = tooltips.get(m.object);
-        wrapper.el.style.display = 'none';
-        wrapper.visible = false;
-      }
-
       if (tooltips.has(m.object)) {
         const wrapper = tooltips.get(m.object);
-        // sync trigger if changed in sidebar
         wrapper.trigger = m.tooltipTrigger || wrapper.trigger;
+
+        // Only handle tooltips that are enabled
         if (wrapper.trigger === 'always') {
           wrapper.visible = true;
           wrapper.el.style.display = 'block';
@@ -854,7 +909,9 @@ function animate() {
           updateTooltipPosition(wrapper.el, anchor);
         }
       }
-    } catch (e) { }
+    } catch (e) {
+      console.error('Error in tooltip animation:', e);
+    }
   });
 }
 animate();
@@ -883,7 +940,6 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
     const scene = gltf.scene;
 
     const extractAllMeshes = (object, matrix = new THREE.Matrix4()) => {
-      const meshes = [];
       const currentMatrix = matrix.clone().multiply(object.matrix);
 
       if (object.isMesh) {
@@ -937,12 +993,12 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
         name: mesh.name,
         object: mesh,
         showTooltip: true,
-        tooltipTrigger: 'onclick', 
+        tooltipTrigger: 'onclick',
         sourceFile: file.name,
         groupId: group.id,
         isGLBPart: true,
-        originalMatrix: meshData.originalMatrix, 
-        originalMaterial: meshData.originalMaterial 
+        originalMatrix: meshData.originalMatrix,
+        originalMaterial: meshData.originalMaterial
       });
     });
 
@@ -1000,7 +1056,6 @@ document.getElementById('resetSceneBtn').addEventListener('click', () => {
   models.push({ name: 'Box', object: box, showTooltip: true });
   refreshSidebarList();
 });
-
 viewer.addSplatScene(splatPath, { progressiveLoad: false, useFrustumCulling: true }).then(() => {
   viewer.start();
 

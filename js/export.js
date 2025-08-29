@@ -135,6 +135,7 @@ export function exportScene(splatPath, models, groups) {
 </head>
 <body>
   <script type="module" src="main.js"></script>
+  <script type="module" src="api/camera.js"></script>
 </body>
 </html>`;
 
@@ -143,6 +144,7 @@ import * as GaussianSplats3D from './lib/gaussian-splats-3d.module.js';
 import * as THREE from './lib/three.module.js';
 import { GLTFLoader } from './lib/GLTFLoader.js';
 import { DRACOLoader } from './lib/DRACOLoader.js';
+
 
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
@@ -200,7 +202,11 @@ function createTooltipForModel(model, modelData) {
   return { 
     tooltip, 
     visible: trigger === 'always',
-    trigger: trigger
+    trigger: trigger,
+    manualControl: false,
+    manualHidden: false,
+    apiOverride: false,
+    apiHidden: false
   };
 }
 
@@ -248,18 +254,34 @@ function animate() {
   if (camera) {
     tooltips.forEach((tooltipData, model) => {
       try {
-        const { tooltip, trigger, visible } = tooltipData;
+        const { tooltip, trigger, visible, apiOverride, apiHidden } = tooltipData;
+        
+        // Skip if API has overridden this tooltip
+        if (apiOverride) {
+          if (apiHidden) {
+            tooltip.style.display = 'none';
+          } else {
+            tooltip.style.display = 'block';
+            const anchor = new THREE.Vector3();
+            model.getWorldPosition(anchor);
+            updateTooltipPosition(tooltip, anchor);
+          }
+          return;
+        }
+        
         if (visible) {
           const anchor = new THREE.Vector3();
           model.getWorldPosition(anchor);
           updateTooltipPosition(tooltip, anchor);
         } else if (trigger === 'always') {
-          // Ensure always-visible tooltips stay visible
-          tooltipData.visible = true;
-          tooltip.style.display = 'block';
-          const anchor = new THREE.Vector3();
-          model.getWorldPosition(anchor);
-          updateTooltipPosition(tooltip, anchor);
+          // Ensure always-visible tooltips stay visible (unless manually controlled)
+          if (!tooltipData.manualControl || !tooltipData.manualHidden) {
+            tooltipData.visible = true;
+            tooltip.style.display = 'block';
+            const anchor = new THREE.Vector3();
+            model.getWorldPosition(anchor);
+            updateTooltipPosition(tooltip, anchor);
+          }
         }
       } catch (e) {
         console.error('Error in tooltip animation:', e);
@@ -360,7 +382,11 @@ function loadGLBModel(modelData, onComplete) {
         tooltip: wrapper.tooltip, 
         modelData, 
         visible: wrapper.visible, 
-        trigger: wrapper.trigger 
+        trigger: wrapper.trigger,
+        manualControl: wrapper.manualControl,
+        manualHidden: wrapper.manualHidden,
+        apiOverride: wrapper.apiOverride,
+        apiHidden: wrapper.apiHidden
       });
     }
 
@@ -424,7 +450,11 @@ function loadPrimitiveModel(modelData) {
       tooltip: wrapper.tooltip, 
       modelData, 
       visible: wrapper.visible, 
-      trigger: wrapper.trigger 
+      trigger: wrapper.trigger,
+      manualControl: wrapper.manualControl,
+      manualHidden: wrapper.manualHidden,
+      apiOverride: wrapper.apiOverride,
+      apiHidden: wrapper.apiHidden
     });
   }
 
@@ -522,6 +552,23 @@ fetch('scene.json')
         return;
       }
       
+      // Expose global variables for API access
+      window.viewer = viewer;
+      window.camera = camera;
+      window.scene = scene;
+      window.models = models;
+      window.tooltips = tooltips;
+      window.groups = groups;
+      
+      // Initialize APIs
+      if (window.CameraAPI) {
+        window.CameraAPI.init(viewer);
+      }
+      
+      if (window.TooltipAPI) {
+        window.TooltipAPI.init(models, tooltips);
+      }
+      
       // Add lighting to the scene
       setupLighting();
 
@@ -549,7 +596,7 @@ fetch('scene.json')
           for (const intersect of intersects) {
             const obj = intersect.object;
             const tooltipData = tooltips.get(obj);
-            if (tooltipData && tooltipData.trigger === 'onhover') {
+            if (tooltipData && tooltipData.trigger === 'onhover' && !tooltipData.apiOverride) {
               hoveredObject = obj;
               hoveredTooltipData = tooltipData;
               break;
@@ -561,7 +608,7 @@ fetch('scene.json')
             // Hide previous hovered tooltip if different
             if (lastHovered && lastHovered !== hoveredObject) {
               const prevTooltipData = tooltips.get(lastHovered);
-              if (prevTooltipData && prevTooltipData.trigger === 'onhover') {
+              if (prevTooltipData && prevTooltipData.trigger === 'onhover' && !prevTooltipData.apiOverride) {
                 prevTooltipData.visible = false;
                 prevTooltipData.tooltip.style.display = 'none';
               }
@@ -579,7 +626,7 @@ fetch('scene.json')
             // No valid hover object found, hide any visible onhover tooltips
             if (lastHovered) {
               const prevTooltipData = tooltips.get(lastHovered);
-              if (prevTooltipData && prevTooltipData.trigger === 'onhover') {
+              if (prevTooltipData && prevTooltipData.trigger === 'onhover' && !prevTooltipData.apiOverride) {
                 prevTooltipData.visible = false;
                 prevTooltipData.tooltip.style.display = 'none';
               }
@@ -601,7 +648,7 @@ fetch('scene.json')
             const obj = intersects[0].object;
             const tooltipData = tooltips.get(obj);
             
-            if (tooltipData && tooltipData.trigger === 'onclick') {
+            if (tooltipData && tooltipData.trigger === 'onclick' && !tooltipData.apiOverride) {
               // Toggle visibility
               tooltipData.visible = !tooltipData.visible;
               tooltipData.tooltip.style.display = tooltipData.visible ? 'block' : 'none';
@@ -633,7 +680,7 @@ fetch('scene.json')
       window.addEventListener('resize', () => {
         tooltips.forEach((tooltipData, model) => {
           try {
-            if (tooltipData.visible) {
+            if (tooltipData.visible && !tooltipData.apiOverride) {
               const anchor = new THREE.Vector3();
               model.getWorldPosition(anchor);
               updateTooltipPosition(tooltipData.tooltip, anchor);
