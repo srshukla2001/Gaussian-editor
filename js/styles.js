@@ -358,4 +358,24 @@ styleTag.innerHTML = `
   font-weight: 500;
   margin-bottom: 2px;
 }
+    #transformHistory {
+    max-height: 100px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    background: var(--bg-secondary);
+    font-size: 11px;
+  }
+  
+  #transformHistory div {
+    margin-bottom: 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  
+  #transformHistory div:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+  }
 `;

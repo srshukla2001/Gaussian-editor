@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
     "express": "^5.1.0",
     "file-saver": "^2.0.5",

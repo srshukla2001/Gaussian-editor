@@ -8,6 +8,8 @@ import { createGUI } from './gui.js';
 import { createTransformGizmo } from './gizmo.js';
 import { styleTag } from './styles.js'
 import { sidebar } from './sidebar.js';
+import { AITransformer } from './ai-generate.js';
+
 window.THREE = THREE;
 
 const camera = new THREE.PerspectiveCamera(
@@ -51,6 +53,7 @@ const models = [];
 const groups = [];
 const mixers = [];
 const meshes = [];
+let aiTransformer = null;
 const tooltips = new Map();
 let selectedModel = null;
 let selectedGroup = null;
@@ -111,7 +114,6 @@ function selectGroup(group) {
     gui = null;
   }
 
-
   const groupDummy = new THREE.Object3D();
   groupDummy.name = group.name;
   groupDummy.position.copy(calculateGroupCenter(group));
@@ -156,6 +158,371 @@ function transformGroup(group, operation, value) {
     obj.updateMatrix();
   });
 }
+class GLBGenerator {
+  constructor(apiUrl = 'http://localhost:8000') {
+    this.apiUrl = apiUrl;
+    this.setupUI();
+  }
+
+  setupUI() {
+    const glbSection = document.createElement('div');
+    glbSection.className = 'sidebar-section';
+    glbSection.innerHTML = `
+            <h3>🤖 AI 3D Generator</h3>
+            <div class="form-group">
+                <label for="glbImageInput">Upload Image</label>
+                <input type="file" id="glbImageInput" accept="image/*" style="display: none;">
+                <label for="glbImageInput" class="btn-secondary" style="display: block; text-align: center; margin-bottom: 10px;">
+                    📷 Choose Image
+                </label>
+                <div id="imagePreview" style="margin-top: 8px; text-align: center; min-height: 80px;"></div>
+            </div>
+            <div class="form-group">
+                <label for="aiPrompt">AI Instructions (optional)</label>
+                <input type="text" id="aiPrompt" placeholder="e.g., car from front view, person standing" class="tooltip-input">
+                <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                    Help AI understand what's in the image
+                </div>
+            </div>
+            <button id="generateGLBBtn" class="btn-primary">🚀 Generate Smart 3D</button>
+            <div id="glbStatus" style="margin-top: 10px; font-size: 12px; min-height: 20px;"></div>
+            <div id="aiAnalysis" style="margin-top: 8px; font-size: 11px; color: var(--accent);"></div>
+        `;
+
+    const sidebar = document.querySelector('.hp-sidebar');
+    if (sidebar) {
+      const firstSection = sidebar.querySelector('.sidebar-section');
+      sidebar.insertBefore(glbSection, firstSection);
+    }
+
+    document.getElementById('glbImageInput').addEventListener('change', this.handleImagePreview.bind(this));
+    document.getElementById('generateGLBBtn').addEventListener('click', this.generateGLB.bind(this));
+  }
+
+  handleImagePreview(event) {
+    const file = event.target.files[0];
+    const preview = document.getElementById('imagePreview');
+    const statusEl = document.getElementById('glbStatus');
+    const analysisEl = document.getElementById('aiAnalysis');
+
+    // Clear previous status and analysis
+    statusEl.textContent = '';
+    analysisEl.textContent = '';
+
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        preview.innerHTML = `
+          <img src="${e.target.result}" style="max-width: 100%; max-height: 120px; border-radius: 4px; border: 1px solid var(--border);">
+          <div style="font-size: 10px; margin-top: 4px; color: var(--muted);">
+            ${file.name}
+          </div>
+        `;
+      };
+      reader.readAsDataURL(file);
+    } else {
+      preview.innerHTML = '<div style="color: red; font-size: 11px;">Please select a valid image file</div>';
+    }
+  }
+
+  async generateGLB() {
+    const imageInput = document.getElementById('glbImageInput');
+    const aiPrompt = document.getElementById('aiPrompt').value;
+    const statusEl = document.getElementById('glbStatus');
+    const analysisEl = document.getElementById('aiAnalysis');
+
+    if (!imageInput.files[0]) {
+      statusEl.textContent = 'Please select an image first';
+      statusEl.style.color = 'red';
+      return;
+    }
+
+    try {
+      statusEl.textContent = '🤖 AI is analyzing your image...';
+      statusEl.style.color = 'var(--text)';
+      analysisEl.textContent = '';
+
+      const generateBtn = document.getElementById('generateGLBBtn');
+      generateBtn.disabled = true;
+      generateBtn.textContent = 'AI Processing...';
+
+      const formData = new FormData();
+      formData.append('image', imageInput.files[0]);
+      formData.append('prompt', aiPrompt);
+
+      const response = await fetch(`${this.apiUrl}/generate-3d`, {
+        method: 'POST',
+        body: formData
+      });
+
+      // Check if response is JSON (error) or GLB
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Server error');
+      }
+
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+      }
+
+      // Get AI analysis from headers
+      const analysisHeader = response.headers.get('X-3D-Analysis');
+      if (analysisHeader) {
+        try {
+          const analysis = JSON.parse(analysisHeader);
+          analysisEl.innerHTML = `
+                    <strong>AI Analysis:</strong><br>
+                    • Type: ${analysis.object_type}<br>
+                    • View: ${analysis.primary_view}<br>
+                    • Strategy: ${analysis.depth_strategy}<br>
+                    • ${analysis.is_symmetrical ? '✓ Symmetrical' : '✗ Not symmetrical'}
+                `;
+        } catch (e) {
+          console.warn('Failed to parse analysis header:', e);
+        }
+      }
+
+      const blob = await response.blob();
+
+      // Check if blob is valid
+      if (blob.size === 0) {
+        throw new Error('Received empty GLB file');
+      }
+
+      const url = URL.createObjectURL(blob);
+
+      statusEl.textContent = '✅ Smart 3D model generated!';
+      statusEl.style.color = 'green';
+
+      await this.loadGLBToScene(url, imageInput.files[0].name);
+
+      generateBtn.disabled = false;
+      generateBtn.textContent = '🚀 Generate Smart 3D';
+
+    } catch (error) {
+      console.error('AI Generation Error:', error);
+      statusEl.textContent = '❌ Error: ' + error.message;
+      statusEl.style.color = 'red';
+
+      const generateBtn = document.getElementById('generateGLBBtn');
+      if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = '🚀 Generate Smart 3D';
+      }
+    }
+  }
+
+  async loadGLBToScene(glbUrl, originalFilename) {
+    try {
+      const gltf = await loader.loadAsync(glbUrl);
+      const scene = gltf.scene;
+
+      const name = `AI_3D_${originalFilename.split('.')[0]}`;
+      scene.name = name;
+
+      // Center and scale properly
+      const box = new THREE.Box3().setFromObject(scene);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+
+      scene.position.sub(center);
+
+      const maxSize = Math.max(size.x, size.y, size.z);
+      if (maxSize > 0) {
+        const scale = 1.5 / maxSize;
+        scene.scale.set(scale, scale, scale);
+      }
+
+      // Add proper lighting and materials
+      scene.traverse(child => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+
+          // Enhance materials
+          if (child.material) {
+            child.material.needsUpdate = true;
+          }
+        }
+      });
+
+      viewer.threeScene.add(scene);
+
+      const modelData = {
+        name: name,
+        object: scene,
+        showTooltip: true,
+        tooltipTrigger: 'onclick',
+        sourceFile: originalFilename,
+        isAIGenerated: true
+      };
+
+      models.push(modelData);
+      refreshSidebarList();
+      selectModel(scene);
+
+      setTimeout(() => URL.revokeObjectURL(glbUrl), 1000);
+
+    } catch (error) {
+      console.error('Error loading GLB:', error);
+      const statusEl = document.getElementById('glbStatus');
+      statusEl.textContent = 'Error loading model: ' + error.message;
+      statusEl.style.color = 'red';
+    }
+  }
+}
+
+// Initialize the GLB generator
+// let glbGenerator;
+// document.addEventListener('DOMContentLoaded', function() {
+//   glbGenerator = new GLBGenerator();
+// });
+function createAITransformationSection() {
+  const aiSection = document.createElement('div');
+  aiSection.className = 'sidebar-section';
+  aiSection.innerHTML = `
+    <h3>AI Transformation</h3>
+    <div class="form-group">
+      <label for="apiKeyInput">Gemini API Key</label>
+      <input type="password" id="apiKeyInput" placeholder="Enter your Gemini API key">
+    </div>
+    <div class="form-group">
+      <label for="aiPromptInput">Transform selected object</label>
+      <textarea id="aiPromptInput" placeholder="e.g., make it blue, make it larger, rotate 45 degrees" rows="3"></textarea>
+    </div>
+    <button id="transformBtn" class="btn-primary" disabled>Transform with AI</button>
+    <div id="aiStatus" style="margin-top: 10px; font-size: 12px; min-height: 20px;"></div>
+    <div id="transformHistory" style="margin-top: 10px; font-size: 11px; color: var(--muted);"></div>
+  `;
+
+  // Find the sidebar and add the AI section to it
+  const sidebar = document.querySelector('.hp-sidebar');
+  if (sidebar) {
+    // Add the AI section at the top of the sidebar
+    const firstSection = sidebar.querySelector('.sidebar-section');
+    if (firstSection) {
+      sidebar.insertBefore(aiSection, firstSection);
+    } else {
+      sidebar.appendChild(aiSection);
+    }
+  }
+
+  // Add event listeners
+  const transformBtn = document.getElementById('transformBtn');
+  const promptInput = document.getElementById('aiPromptInput');
+
+  if (transformBtn && promptInput) {
+    transformBtn.addEventListener('click', transformWithAI);
+    promptInput.addEventListener('input', updateTransformButtonState);
+  }
+
+  // Update button state based on selection
+  updateTransformButtonState();
+}
+
+function updateTransformButtonState() {
+  const transformBtn = document.getElementById('transformBtn');
+  const promptInput = document.getElementById('aiPromptInput');
+  const apiKeyInput = document.getElementById('apiKeyInput');
+
+  if (transformBtn && promptInput && apiKeyInput) {
+    const hasSelection = selectedModel || selectedGroup;
+    const hasPrompt = promptInput.value.trim().length > 0;
+    const hasApiKey = apiKeyInput.value.trim().length > 0;
+
+    transformBtn.disabled = !(hasSelection && hasPrompt && hasApiKey);
+    transformBtn.title = !hasSelection ? 'Select an object first' :
+      !hasPrompt ? 'Enter a transformation prompt' :
+        !hasApiKey ? 'Enter API key' : '';
+  }
+}
+
+// Add this function to handle AI transformation
+async function transformWithAI() {
+  const apiKey = document.getElementById('apiKeyInput').value;
+  const prompt = document.getElementById('aiPromptInput').value;
+  const statusEl = document.getElementById('aiStatus');
+  const historyEl = document.getElementById('transformHistory');
+
+  if (!selectedModel && !selectedGroup) {
+    statusEl.textContent = 'Please select an object first';
+    statusEl.style.color = 'red';
+    return;
+  }
+
+  if (!apiKey) {
+    statusEl.textContent = 'Please enter a Gemini API key';
+    statusEl.style.color = 'red';
+    return;
+  }
+
+  if (!prompt) {
+    statusEl.textContent = 'Please enter a transformation prompt';
+    statusEl.style.color = 'red';
+    return;
+  }
+
+  try {
+    statusEl.textContent = 'Analyzing and transforming...';
+    statusEl.style.color = 'var(--text)';
+    const transformBtn = document.getElementById('transformBtn');
+    transformBtn.disabled = true;
+
+    if (!aiTransformer) {
+      aiTransformer = new AITransformer(apiKey);
+    }
+
+    // Get the target object (either selected model or group objects)
+    const targetObject = selectedModel || (selectedGroup && selectedGroup.objects[0]);
+
+    const instructions = await aiTransformer.getTransformationInstructions(prompt, targetObject);
+
+    // Apply transformations to selected object or all objects in group
+    if (selectedModel) {
+      aiTransformer.applyTransformations(selectedModel, instructions.transformations);
+    } else if (selectedGroup) {
+      selectedGroup.objects.forEach(obj => {
+        aiTransformer.applyTransformations(obj, instructions.transformations);
+      });
+    }
+
+    statusEl.textContent = 'Transformation applied successfully!';
+    statusEl.style.color = 'green';
+
+    // Add to transformation history
+    const historyItem = document.createElement('div');
+    historyItem.textContent = `✓ ${new Date().toLocaleTimeString()}: ${prompt}`;
+    historyItem.style.marginBottom = '4px';
+    historyEl.appendChild(historyItem);
+
+    // Scroll to bottom of history
+    historyEl.scrollTop = historyEl.scrollHeight;
+
+  } catch (error) {
+    console.error('AI Transformation Error:', error);
+    statusEl.textContent = 'Error: ' + error.message;
+    statusEl.style.color = 'red';
+  } finally {
+    const transformBtn = document.getElementById('transformBtn');
+    if (transformBtn) transformBtn.disabled = false;
+  }
+}
+
+// Update the selected model/group tracking to enable/disable transform button
+// Modify your selectModel and selectGroup functions to call this:
+function updateSelectionUI() {
+  updateTransformButtonState();
+  updateSelectedInfo();
+}
+
+// Then in your selectModel and selectGroup functions, replace updateSelectedInfo() with updateSelectionUI()
+
+// Call createAITransformationSection() after your sidebar is created
+// Add this line after document.body.appendChild(sidebar);
+setTimeout(() => {
+  createAITransformationSection();
+}, 100);
 
 function refreshGroupList() {
   const list = document.getElementById('groupsList');
@@ -1056,6 +1423,7 @@ document.getElementById('resetSceneBtn').addEventListener('click', () => {
   models.push({ name: 'Box', object: box, showTooltip: true });
   refreshSidebarList();
 });
+let glbGenerator = null;
 viewer.addSplatScene(splatPath, { progressiveLoad: false, useFrustumCulling: true }).then(() => {
   viewer.start();
 
@@ -1065,10 +1433,10 @@ viewer.addSplatScene(splatPath, { progressiveLoad: false, useFrustumCulling: tru
       canvasEl.style.touchAction = 'none';
     }
     setupTransformGizmo();
+    glbGenerator = new GLBGenerator();
     animate();
   });
   const scene = viewer.threeScene;
-
   scene.add(new THREE.AmbientLight(0xffffff, 0.85));
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
   dirLight.position.set(5, 10, 7);
