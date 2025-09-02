@@ -257,6 +257,7 @@ styleTag.innerHTML = `
 
   /* Tooltip styling */
   .hp-tooltip {
+    pointer-events: none !important;
     position: absolute;
     pointer-events: auto;
     background: rgba(30, 30, 30, 0.95);
@@ -271,18 +272,21 @@ styleTag.innerHTML = `
   }
 
   .hp-tooltip h4 { 
+    pointer-events: none !important;
     margin: 0 0 6px 0; 
     font-size: 13px; 
     color: #ffffff;
   }
 
   .hp-tooltip p { 
+    pointer-events: none !important;
     margin: 0 0 8px 0; 
     font-size: 12px; 
     color: var(--muted); 
   }
 
   .hp-tooltip button { 
+    pointer-events: none !important;
     border-radius: 4px; 
     padding: 6px 8px; 
     border: none; 

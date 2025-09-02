@@ -1,0 +1,29 @@
+if you want to disable right click panning:
+
+in gaussian-splat-3d-mosule.js
+
+
+            for (let controls of [this.orthographicControls, this.perspectiveControls,]) {
+                if (controls) {
+                    controls.listenToKeyEvents(window);
+                    controls.rotateSpeed = 0.5;
+                    controls.maxPolarAngle = Math.PI * .75;
+                    controls.minPolarAngle = 0.1;
+                    controls.enableDamping = true;
+                    controls.dampingFactor = 0.05;
+                    // disable right-button panning (prevent pan when user right-clicks and drags)
+                    controls.mouseButtons.RIGHT = -1;
+                    controls.target.copy(this.initialCameraLookAt);
+                    controls.update();
+                }
+
+
+if you want to disable left cick focus changing
+
+in gaussian-splat-3d-mosule.js
+
+    onMouseClick(mouse) {
+        // update mouse position but do NOT change pan / focal point on click
+        this.mousePosition.set(mouse.offsetX, mouse.offsetY);
+        // intentionally disabled: this.checkForFocalPointChange();
+    }

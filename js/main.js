@@ -682,7 +682,7 @@ function updateTooltipContent(model) {
   const description = modelData?.description || `Description for ${name}`;
   const buttonText = modelData?.buttonText || "Select";
 
-  tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p><button>${buttonText}</button>`;
+  tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p>`;
 
 
   tooltip.querySelector('button').addEventListener('click', () => {
@@ -795,7 +795,7 @@ function createModelItem(m, index) {
   left.appendChild(meta);
   left.appendChild(nameInput);
   left.appendChild(descInput);
-  left.appendChild(buttonInput);
+  // left.appendChild(buttonInput);
 
   const triggerLabel = document.createElement('label');
   triggerLabel.style.marginTop = '6px';
@@ -1071,7 +1071,7 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   mixers.forEach(m => m.update(delta));
-  clampCamera(viewer.camera);
+  // clampCamera(viewer.camera);
   if (skybox && viewer.camera) {
     skybox.position.copy(viewer.camera.position);
   }

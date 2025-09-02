@@ -95,6 +95,7 @@ export function exportScene(skyboxTextureUrl, splatPath, models, groups) {
     }
     
     .hp-tooltip {
+      pointer-events: none !important;
       position: absolute;
       pointer-events: auto;
       background: rgba(30, 30, 30, 0.95);
@@ -110,18 +111,21 @@ export function exportScene(skyboxTextureUrl, splatPath, models, groups) {
     }
     
     .hp-tooltip h4 { 
+      pointer-events: none !important;
       margin: 0 0 6px 0; 
       font-size: 13px; 
       color: #ffffff;
     }
 
     .hp-tooltip p { 
+      pointer-events: none !important;
       margin: 0 0 8px 0; 
       font-size: 12px; 
       color: var(--muted); 
     }
 
     .hp-tooltip button { 
+      pointer-events: none !important;
       border-radius: 4px; 
       padding: 6px 8px; 
       border: none; 
@@ -854,19 +858,21 @@ window.addEventListener('unhandledrejection', (e) => {
   try {
     downloadFile('main.js', js, 'text/javascript');
     downloadFile('scene.json', json, 'application/json');
-
+    downloadFile('index.html', html, 'text/html');
+    
     const readme = `# Exported Scene
-
-Place your GLB model files in the 'assets' folder alongside these files.
-
-Required folder structure:
-- index.html
-- main.js
+    
+    Place your GLB model files in the 'assets' folder alongside these files.
+    
+    Required folder structure:
+    - index.html
+    - main.js
 - scene.json
 - lib/ (containing three.module.js, gaussian-splats-3d.module.js, GLTFLoader.js, DRACOLoader.js)
 - assets/ (containing your GLB model files)
 
 Serve these files through a web server for proper loading.`;
+downloadFile('readme.md', readme, 'text/markdown');
 
   } catch (error) {
     console.error('Error in export process:', error);
