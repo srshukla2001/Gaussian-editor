@@ -1,11 +1,12 @@
 // export.js
-export function exportScene(splatPath, models, groups) {
+export function exportScene(skyboxTextureUrl, splatPath, models, groups) {
   // Enhanced model data collection with proper GLB support
   const sceneData = {
     splatPath,
+    skybox: skyboxTextureUrl,
     models: models.map(m => {
       const o = m.object;
-      
+
       // Extract material properties properly
       let materialProps = {};
       if (o.material) {
@@ -19,24 +20,26 @@ export function exportScene(splatPath, models, groups) {
           roughness: o.material.roughness || 1,
           envMapIntensity: o.material.envMapIntensity || 1
         };
-        
+
         // Preserve original GLB material properties if available
         if (m.originalMaterial) {
           materialProps.originalColor = m.originalMaterial.color;
           materialProps.originalWireframe = m.originalMaterial.wireframe;
         }
       }
-      
+
       return {
+        id: m.id || generateModelId(), // Add ID to exported data
         name: m.name,
         description: m.description || `Description for ${m.name || 'model'}`,
-        buttonText: m.buttonText || "Select",
+        // buttonText: m.buttonText || "Select",
+        script: m.script || "", // Add script to exported data
         geometryType: o.geometry?.type || 'BoxGeometry',
         position: o.position.toArray(),
         rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
         scale: o.scale.toArray(),
         showTooltip: m.showTooltip !== false,
-        tooltipTrigger: m.tooltipTrigger || 'onclick', // Default to onclick as in main app
+        tooltipTrigger: m.tooltipTrigger || 'onclick',
         groupId: m.groupId || null,
         sourceFile: m.sourceFile || null,
         isGLBPart: m.isGLBPart || false,
@@ -53,7 +56,14 @@ export function exportScene(splatPath, models, groups) {
     }))
   };
 
-  const html = `<!DOCTYPE html>
+  // Add generateModelId function for the exported code
+  function generateModelId() {
+    return 'model_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  }
+
+  const html = `
+  
+  <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -137,7 +147,9 @@ export function exportScene(splatPath, models, groups) {
   <script type="module" src="main.js"></script>
   <script type="module" src="api/camera.js"></script>
 </body>
-</html>`;
+</html>
+  
+  `;
 
   const js = `
 import * as GaussianSplats3D from './lib/gaussian-splats-3d.module.js';
@@ -163,6 +175,66 @@ let camera = null;
 let scene = null;
 let models = [];
 let groups = [];
+let skybox = null;
+
+// Skybox functions
+function createSkybox(textureUrl) {
+  if (skybox) {
+    if (scene) scene.remove(skybox);
+    skybox = null;
+  }
+  
+  if (!textureUrl) return;
+  
+  const textureLoader = new THREE.TextureLoader();
+  textureLoader.load(textureUrl, (texture) => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    
+    const skyboxGeometry = new THREE.SphereGeometry(100, 32, 32);
+    const skyboxMaterial = new THREE.MeshBasicMaterial({
+      map: texture,
+      side: THREE.BackSide,
+      fog: false
+    });
+    
+    skybox = new THREE.Mesh(skyboxGeometry, skyboxMaterial);
+    skybox.renderOrder = -1000;
+    
+    // Only add to scene if scene is available
+    if (scene) {
+      scene.add(skybox);
+      if (camera) {
+        skybox.position.copy(camera.position);
+      }
+    }
+  }, undefined, (err) => {
+    console.error('Failed to load skybox texture:', err);
+  });
+}
+
+
+function removeSkybox() {
+  if (skybox) {
+    scene.remove(skybox);
+    skybox = null;
+  }
+}
+
+// Add ID and script execution function
+function executeModelScript(model, modelData) {
+  if (modelData.script && modelData.script.trim() !== "") {
+    try {
+      // Create a safe execution context
+      const scriptFunction = new Function(
+        'model', 'modelData', 'camera', 'viewer', 'scene',
+        modelData.script
+      );
+      scriptFunction(model, modelData, camera, viewer, scene);
+    } catch (err) {
+      console.error("Script execution error for model:", modelData.name || modelData.id, err);
+    }
+  }
+}
 
 function createTooltipForModel(model, modelData) {
   const tooltip = document.createElement('div');
@@ -172,7 +244,7 @@ function createTooltipForModel(model, modelData) {
   const description = modelData?.description || \`Description for \${name}\`;
   const buttonText = modelData?.buttonText || "Select";
   
-  tooltip.innerHTML = \`<h4>\${name}</h4><p>\${description}</p><button>\${buttonText}</button>\`;
+  tooltip.innerHTML = \`<h4>\${name}</h4><p>\${description}</p><button style="display: none">\${buttonText}</button>\`;
   
   // Set initial visibility based on trigger type
   const trigger = modelData.tooltipTrigger || 'onclick';
@@ -186,6 +258,8 @@ function createTooltipForModel(model, modelData) {
   
   tooltip.querySelector('button').addEventListener('click', () => {
     console.log('Selected model:', name);
+    executeModelScript(model, modelData); // Execute script on button click
+    
     if (camera && viewer && viewer.controls) {
       const boundingBox = new THREE.Box3().setFromObject(model);
       const center = boundingBox.getCenter(new THREE.Vector3());
@@ -202,11 +276,7 @@ function createTooltipForModel(model, modelData) {
   return { 
     tooltip, 
     visible: trigger === 'always',
-    trigger: trigger,
-    manualControl: false,
-    manualHidden: false,
-    apiOverride: false,
-    apiHidden: false
+    trigger: trigger
   };
 }
 
@@ -246,48 +316,111 @@ function hideAllOnclickTooltips() {
   });
 }
 
+const CAMERA_LIMITS = {
+  MIN_ZOOM: 5,
+  MAX_ZOOM: 10,
+  MIN_POLAR: 10,
+  MAX_POLAR: 170,
+  MIN_HEIGHT: 1,
+  TARGET: new THREE.Vector3(0, 0, 0)
+};
+
+function clampCamera(camera) {
+  // Prevent camera from going below ground plane (y < MIN_HEIGHT)
+  if (camera.position.y < CAMERA_LIMITS.MIN_HEIGHT) {
+    camera.position.y = CAMERA_LIMITS.MIN_HEIGHT;
+  }
+
+  // Calculate current distance from target
+  const distance = camera.position.distanceTo(CAMERA_LIMITS.TARGET);
+
+  // Clamp zoom distance
+  const clampedDistance = THREE.MathUtils.clamp(
+    distance,
+    CAMERA_LIMITS.MIN_ZOOM,
+    CAMERA_LIMITS.MAX_ZOOM
+  );
+
+  // Adjust position if zoom limit was exceeded
+  if (distance !== clampedDistance) {
+    const direction = new THREE.Vector3()
+      .subVectors(camera.position, CAMERA_LIMITS.TARGET)
+      .normalize();
+    camera.position.copy(CAMERA_LIMITS.TARGET).add(direction.multiplyScalar(clampedDistance));
+  }
+
+  // Calculate polar angle (vertical angle)
+  const direction = new THREE.Vector3()
+    .subVectors(camera.position, CAMERA_LIMITS.TARGET)
+    .normalize();
+  const polarAngle = Math.acos(direction.y) * THREE.MathUtils.RAD2DEG;
+
+  // Clamp polar angle
+  const clampedPolar = THREE.MathUtils.clamp(
+    polarAngle,
+    CAMERA_LIMITS.MIN_POLAR,
+    CAMERA_LIMITS.MAX_POLAR
+  );
+
+  // Adjust position if polar angle limit was exceeded
+  if (polarAngle !== clampedPolar) {
+    const spherical = new THREE.Spherical()
+      .setFromVector3(
+        new THREE.Vector3()
+          .subVectors(camera.position, CAMERA_LIMITS.TARGET)
+      );
+
+    spherical.phi = clampedPolar * THREE.MathUtils.DEG2RAD;
+
+    const newPosition = new THREE.Vector3()
+      .copy(CAMERA_LIMITS.TARGET)
+      .add(new THREE.Vector3().setFromSpherical(spherical));
+
+    // Ensure the new position doesn't go below ground
+    if (newPosition.y >= CAMERA_LIMITS.MIN_HEIGHT) {
+      camera.position.copy(newPosition);
+    }
+
+    camera.lookAt(CAMERA_LIMITS.TARGET);
+  }
+
+  // Final check to ensure camera is above ground
+  if (camera.position.y < CAMERA_LIMITS.MIN_HEIGHT) {
+    camera.position.y = CAMERA_LIMITS.MIN_HEIGHT;
+    camera.lookAt(CAMERA_LIMITS.TARGET);
+  }
+}
+
+
 function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   mixers.forEach(m => m.update(delta));
-
-  if (camera) {
-    tooltips.forEach((tooltipData, model) => {
-      try {
-        const { tooltip, trigger, visible, apiOverride, apiHidden } = tooltipData;
-        
-        // Skip if API has overridden this tooltip
-        if (apiOverride) {
-          if (apiHidden) {
-            tooltip.style.display = 'none';
-          } else {
-            tooltip.style.display = 'block';
-            const anchor = new THREE.Vector3();
-            model.getWorldPosition(anchor);
-            updateTooltipPosition(tooltip, anchor);
-          }
-          return;
-        }
-        
-        if (visible) {
-          const anchor = new THREE.Vector3();
-          model.getWorldPosition(anchor);
-          updateTooltipPosition(tooltip, anchor);
-        } else if (trigger === 'always') {
-          // Ensure always-visible tooltips stay visible (unless manually controlled)
-          if (!tooltipData.manualControl || !tooltipData.manualHidden) {
-            tooltipData.visible = true;
-            tooltip.style.display = 'block';
-            const anchor = new THREE.Vector3();
-            model.getWorldPosition(anchor);
-            updateTooltipPosition(tooltip, anchor);
-          }
-        }
-      } catch (e) {
-        console.error('Error in tooltip animation:', e);
-      }
-    });
+  clampCamera(viewer.camera);
+  
+  // Keep skybox positioned at camera
+  if (skybox && camera) {
+    skybox.position.copy(camera.position);
   }
+  
+  // Update tooltip positions for always-visible tooltips
+  tooltips.forEach((tooltipData, model) => {
+    try {
+      const { tooltip, trigger, visible } = tooltipData;
+      
+      if (trigger === 'always' && visible) {
+        const anchor = new THREE.Vector3();
+        model.getWorldPosition(anchor);
+        updateTooltipPosition(tooltip, anchor);
+      } else if (trigger === 'onhover' && visible) {
+        const anchor = new THREE.Vector3();
+        model.getWorldPosition(anchor);
+        updateTooltipPosition(tooltip, anchor);
+      }
+    } catch (e) {
+      console.error('Error in tooltip animation:', e);
+    }
+  });
 }
 
 function loadGLBModel(modelData, onComplete) {
@@ -301,7 +434,6 @@ function loadGLBModel(modelData, onComplete) {
     let obj = null;
     
     if (modelData.isGLBPart) {
-      // For GLB parts, we need to extract the specific mesh
       const meshes = [];
       gltf.scene.traverse(child => {
         if (child.isMesh) {
@@ -309,7 +441,6 @@ function loadGLBModel(modelData, onComplete) {
         }
       });
       
-      // Try to find by name or use first mesh
       let targetMesh = meshes.find(mesh => mesh.name === modelData.name);
       if (!targetMesh && meshes.length > 0) {
         targetMesh = meshes[0];
@@ -319,12 +450,15 @@ function loadGLBModel(modelData, onComplete) {
         obj = targetMesh.clone();
         obj.name = modelData.name;
         
-        // Apply the edited transformations from the editor
+        // Store model data on the object for script execution
+        obj.userData = obj.userData || {};
+        obj.userData.modelData = modelData;
+        obj.userData.id = modelData.id;
+        
         if (modelData.position) obj.position.fromArray(modelData.position);
         if (modelData.rotation) obj.rotation.set(...modelData.rotation);
         if (modelData.scale) obj.scale.fromArray(modelData.scale);
         
-        // Apply material properties from editor
         if (modelData.material && obj.material) {
           if (modelData.material.color) {
             obj.material.color.set('#' + modelData.material.color);
@@ -351,9 +485,13 @@ function loadGLBModel(modelData, onComplete) {
         }
       }
     } else {
-      // Regular GLB model
       obj = gltf.scene;
       obj.name = modelData.name;
+      
+      // Store model data on the object for script execution
+      obj.userData = obj.userData || {};
+      obj.userData.modelData = modelData;
+      obj.userData.id = modelData.id;
       
       if (modelData.position) obj.position.fromArray(modelData.position);
       if (modelData.rotation) obj.rotation.set(...modelData.rotation);
@@ -366,11 +504,14 @@ function loadGLBModel(modelData, onComplete) {
       return;
     }
     
-    // Ensure shadow properties
     obj.traverse(c => {
       if (c.isMesh) {
         c.castShadow = true;
         c.receiveShadow = true;
+        // Ensure all child meshes have access to the model data
+        if (!c.userData) c.userData = {};
+        c.userData.modelData = modelData;
+        c.userData.id = modelData.id;
       }
     });
     
@@ -382,11 +523,7 @@ function loadGLBModel(modelData, onComplete) {
         tooltip: wrapper.tooltip, 
         modelData, 
         visible: wrapper.visible, 
-        trigger: wrapper.trigger,
-        manualControl: wrapper.manualControl,
-        manualHidden: wrapper.manualHidden,
-        apiOverride: wrapper.apiOverride,
-        apiHidden: wrapper.apiHidden
+        trigger: wrapper.trigger
       });
     }
 
@@ -436,6 +573,12 @@ function loadPrimitiveModel(modelData) {
   });
 
   const obj = new THREE.Mesh(geometry, material);
+  
+  // Store model data on the object for script execution
+  obj.userData = obj.userData || {};
+  obj.userData.modelData = modelData;
+  obj.userData.id = modelData.id;
+  
   if (modelData.position) obj.position.fromArray(modelData.position);
   if (modelData.rotation) obj.rotation.set(...modelData.rotation);
   if (modelData.scale) obj.scale.fromArray(modelData.scale);
@@ -450,11 +593,7 @@ function loadPrimitiveModel(modelData) {
       tooltip: wrapper.tooltip, 
       modelData, 
       visible: wrapper.visible, 
-      trigger: wrapper.trigger,
-      manualControl: wrapper.manualControl,
-      manualHidden: wrapper.manualHidden,
-      apiOverride: wrapper.apiOverride,
-      apiHidden: wrapper.apiHidden
+      trigger: wrapper.trigger
     });
   }
 
@@ -483,7 +622,6 @@ function loadModels() {
     loadPromises.push(loadPromise);
   });
 
-  // Wait for all models to load before creating groups
   Promise.all(loadPromises).then(() => {
     sceneData.groups.forEach(groupData => {
       const groupObjects = groupData.objectIds
@@ -504,10 +642,8 @@ function loadModels() {
 }
 
 function setupLighting() {
-  // Ambient light
   scene.add(new THREE.AmbientLight(0xffffff, 0.85));
   
-  // Directional light (sun)
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
   dirLight.position.set(5, 10, 7);
   dirLight.castShadow = true;
@@ -515,7 +651,6 @@ function setupLighting() {
   dirLight.shadow.mapSize.height = 1024;
   scene.add(dirLight);
   
-  // Fill light
   const fillLight = new THREE.DirectionalLight(0x7777ff, 0.3);
   fillLight.position.set(-5, 3, -5);
   scene.add(fillLight);
@@ -527,32 +662,42 @@ fetch('scene.json')
   .then(data => {
     sceneData = data;
     
+    // Load skybox if URL exists in the scene data
+    if (data.skybox) {
+      createSkybox(data.skybox);
+    }
+    
     viewer = new GaussianSplats3D.Viewer({
-      cameraUp: [0, -1, 0],
+      cameraUp: [0, 1, 0],
       initialCameraPosition: [1.54163, 2.68515, -6.37228],
       initialCameraLookAt: [0.45622, 1.95338, 1.51278],
       sphericalHarmonicsDegree: 2,
       useFrustumCulling: true,
       halfPrecisionCovariancesOnGPU: true,
-      sortEnable: true
+      sortEnable: true,
+      sharedMemoryForWorkers: false
     });
 
     viewer.addSplatScene(data.splatPath, { 
-      progressiveLoad: true,
-      useFrustumCulling: true 
+      progressiveLoad: false,
+      useFrustumCulling: true,
+      rotation: [1, 0, 0, 0]
     }).then(() => {
       viewer.start();
       
-      // Get the camera and scene from the viewer
       camera = viewer.camera;
       scene = viewer.scene || viewer.threeScene;
-      
+      camera.up.fromArray([0, 1, 0]);
       if (!scene) {
         console.error('Scene not found in viewer');
         return;
       }
-      
-      // Expose global variables for API access
+      if (skybox && !skybox.parent) {
+      scene.add(skybox);
+      if (camera) {
+        skybox.position.copy(camera.position);
+      }
+  }
       window.viewer = viewer;
       window.camera = camera;
       window.scene = scene;
@@ -560,27 +705,13 @@ fetch('scene.json')
       window.tooltips = tooltips;
       window.groups = groups;
       
-      // Initialize APIs
-      if (window.CameraAPI) {
-        window.CameraAPI.init(viewer);
-      }
-      
-      if (window.TooltipAPI) {
-        window.TooltipAPI.init(models, tooltips);
-      }
-      
-      // Add lighting to the scene
       setupLighting();
-
-      // Load custom models
       loadModels();
 
-      // Setup pointer handlers for tooltip triggers
       const canvas = viewer.renderer && viewer.renderer.domElement;
       if (canvas) {
         canvas.style.touchAction = 'none';
         
-        // Hover handler for onhover triggers
         canvas.addEventListener('pointermove', (ev) => {
           mouse.x = (ev.clientX / window.innerWidth) * 2 - 1;
           mouse.y = -(ev.clientY / window.innerHeight) * 2 + 1;
@@ -592,29 +723,25 @@ fetch('scene.json')
           let hoveredObject = null;
           let hoveredTooltipData = null;
           
-          // Find the first object that has a tooltip with onhover trigger
           for (const intersect of intersects) {
             const obj = intersect.object;
             const tooltipData = tooltips.get(obj);
-            if (tooltipData && tooltipData.trigger === 'onhover' && !tooltipData.apiOverride) {
+            if (tooltipData && tooltipData.trigger === 'onhover') {
               hoveredObject = obj;
               hoveredTooltipData = tooltipData;
               break;
             }
           }
           
-          // Handle onhover tooltips
           if (hoveredObject && hoveredTooltipData) {
-            // Hide previous hovered tooltip if different
             if (lastHovered && lastHovered !== hoveredObject) {
               const prevTooltipData = tooltips.get(lastHovered);
-              if (prevTooltipData && prevTooltipData.trigger === 'onhover' && !prevTooltipData.apiOverride) {
+              if (prevTooltipData && prevTooltipData.trigger === 'onhover') {
                 prevTooltipData.visible = false;
                 prevTooltipData.tooltip.style.display = 'none';
               }
             }
             
-            // Show current hovered tooltip
             hoveredTooltipData.visible = true;
             hoveredTooltipData.tooltip.style.display = 'block';
             const anchor = new THREE.Vector3();
@@ -623,10 +750,9 @@ fetch('scene.json')
             
             lastHovered = hoveredObject;
           } else {
-            // No valid hover object found, hide any visible onhover tooltips
             if (lastHovered) {
               const prevTooltipData = tooltips.get(lastHovered);
-              if (prevTooltipData && prevTooltipData.trigger === 'onhover' && !prevTooltipData.apiOverride) {
+              if (prevTooltipData && prevTooltipData.trigger === 'onhover') {
                 prevTooltipData.visible = false;
                 prevTooltipData.tooltip.style.display = 'none';
               }
@@ -635,7 +761,7 @@ fetch('scene.json')
           }
         });
 
-        // Click handler for onclick-type tooltips (toggle)
+        // Enhanced click handler to execute scripts
         canvas.addEventListener('click', (ev) => {
           mouse.x = (ev.clientX / window.innerWidth) * 2 - 1;
           mouse.y = -(ev.clientY / window.innerHeight) * 2 + 1;
@@ -648,8 +774,12 @@ fetch('scene.json')
             const obj = intersects[0].object;
             const tooltipData = tooltips.get(obj);
             
-            if (tooltipData && tooltipData.trigger === 'onclick' && !tooltipData.apiOverride) {
-              // Toggle visibility
+            // Execute script on object click
+            if (obj.userData && obj.userData.modelData) {
+              executeModelScript(obj, obj.userData.modelData);
+            }
+            
+            if (tooltipData && tooltipData.trigger === 'onclick') {
               tooltipData.visible = !tooltipData.visible;
               tooltipData.tooltip.style.display = tooltipData.visible ? 'block' : 'none';
               
@@ -660,12 +790,9 @@ fetch('scene.json')
               }
             }
           } else {
-            // Clicked on empty space, hide all onclick tooltips
             hideAllOnclickTooltips();
           }
         });
-
-        // Hide onclick tooltips when clicking outside the canvas
         document.addEventListener('mousedown', (e) => {
           if (!canvas.contains(e.target)) {
             hideAllOnclickTooltips();
@@ -673,14 +800,12 @@ fetch('scene.json')
         });
       }
 
-      // Start animation loop
       animate();
 
-      // Add resize handler
       window.addEventListener('resize', () => {
         tooltips.forEach((tooltipData, model) => {
           try {
-            if (tooltipData.visible && !tooltipData.apiOverride) {
+            if (tooltipData.visible) {
               const anchor = new THREE.Vector3();
               model.getWorldPosition(anchor);
               updateTooltipPosition(tooltipData.tooltip, anchor);
@@ -689,10 +814,8 @@ fetch('scene.json')
         });
       });
 
-      // Add keyboard controls for better navigation
       window.addEventListener('keydown', (e) => {
         if (viewer && viewer.controls) {
-          // Reset camera position with R key
           if (e.key === 'r' || e.key === 'R') {
             viewer.controls.reset();
           }
@@ -705,17 +828,14 @@ fetch('scene.json')
   })
   .catch(err => console.error('Failed to load scene.json:', err));
 
-// Handle window errors gracefully
 window.addEventListener('error', (e) => {
   console.error('Runtime error:', e.error);
 });
 
-// Handle unhandled promise rejections
 window.addEventListener('unhandledrejection', (e) => {
   console.error('Unhandled promise rejection:', e.reason);
 });
 `;
-
   const json = JSON.stringify(sceneData, null, 2);
 
   function downloadFile(filename, content, type = 'text/plain') {
@@ -732,11 +852,9 @@ window.addEventListener('unhandledrejection', (e) => {
   }
 
   try {
-    downloadFile('index.html', html, 'text/html');
     downloadFile('main.js', js, 'text/javascript');
     downloadFile('scene.json', json, 'application/json');
 
-    // Create assets folder instructions
     const readme = `# Exported Scene
 
 Place your GLB model files in the 'assets' folder alongside these files.
@@ -749,8 +867,6 @@ Required folder structure:
 - assets/ (containing your GLB model files)
 
 Serve these files through a web server for proper loading.`;
-    
-    downloadFile('README.txt', readme, 'text/plain');
 
   } catch (error) {
     console.error('Error in export process:', error);
