@@ -32,7 +32,7 @@ export function exportScene(skyboxTextureUrl, splatPath, models, groups) {
         id: m.id || generateModelId(), // Add ID to exported data
         name: m.name,
         description: m.description || `Description for ${m.name || 'model'}`,
-        // buttonText: m.buttonText || "Select",
+        buttonText: m.buttonText || "Select",
         script: m.script || "", // Add script to exported data
         geometryType: o.geometry?.type || 'BoxGeometry',
         position: o.position.toArray(),
@@ -40,6 +40,7 @@ export function exportScene(skyboxTextureUrl, splatPath, models, groups) {
         scale: o.scale.toArray(),
         showTooltip: m.showTooltip !== false,
         tooltipTrigger: m.tooltipTrigger || 'onclick',
+        showTooltipButton: m.showTooltipButton !== false,
         groupId: m.groupId || null,
         sourceFile: m.sourceFile || null,
         isGLBPart: m.isGLBPart || false,
@@ -95,7 +96,6 @@ export function exportScene(skyboxTextureUrl, splatPath, models, groups) {
     }
     
     .hp-tooltip {
-      pointer-events: none !important;
       position: absolute;
       pointer-events: auto;
       background: rgba(30, 30, 30, 0.95);
@@ -111,21 +111,18 @@ export function exportScene(skyboxTextureUrl, splatPath, models, groups) {
     }
     
     .hp-tooltip h4 { 
-      pointer-events: none !important;
       margin: 0 0 6px 0; 
       font-size: 13px; 
       color: #ffffff;
     }
 
     .hp-tooltip p { 
-      pointer-events: none !important;
       margin: 0 0 8px 0; 
       font-size: 12px; 
       color: var(--muted); 
     }
 
     .hp-tooltip button { 
-      pointer-events: none !important;
       border-radius: 4px; 
       padding: 6px 8px; 
       border: none; 
@@ -245,12 +242,16 @@ function createTooltipForModel(model, modelData) {
   tooltip.className = 'hp-tooltip';
   
   const name = modelData?.name || model.name || model.type;
-  const description = modelData?.description || \`Description for \${name}\`;
+  const description = modelData?.description || \`Description for ${name}\`;
   const buttonText = modelData?.buttonText || "Select";
+  const showButton = modelData?.showTooltipButton !== false;
   
-  tooltip.innerHTML = \`<h4>\${name}</h4><p>\${description}</p><button style="display: none">\${buttonText}</button>\`;
+  // Use string concatenation instead of template literals
+  tooltip.innerHTML = '<h4>' + name + '</h4><p>' + description + '</p>' + (showButton ? '<button>' + buttonText + '</button>' : '');
   
-  // Set initial visibility based on trigger type
+  // Set pointer events based on button visibility
+  tooltip.style.pointerEvents = showButton ? 'auto' : 'none';
+  
   const trigger = modelData.tooltipTrigger || 'onclick';
   if (trigger === 'always') {
     tooltip.style.display = 'block';
@@ -260,22 +261,28 @@ function createTooltipForModel(model, modelData) {
   
   document.body.appendChild(tooltip);
   
-  tooltip.querySelector('button').addEventListener('click', () => {
-    console.log('Selected model:', name);
-    executeModelScript(model, modelData); // Execute script on button click
-    
-    if (camera && viewer && viewer.controls) {
-      const boundingBox = new THREE.Box3().setFromObject(model);
-      const center = boundingBox.getCenter(new THREE.Vector3());
-      const size = boundingBox.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const fov = camera.fov * (Math.PI / 180);
-      const cameraDistance = maxDim / (2 * Math.tan(fov / 2));
-      
-      camera.position.copy(center).add(new THREE.Vector3(1, 0.5, 1).normalize().multiplyScalar(cameraDistance * 1.5));
-      viewer.controls.target.copy(center);
+  // Only add button click handler if button is shown
+  if (showButton) {
+    const button = tooltip.querySelector('button');
+    if (button) {
+      button.addEventListener('click', () => {
+        console.log('Selected model:', name);
+        executeModelScript(model, modelData);
+        
+        if (camera && viewer && viewer.controls) {
+          const boundingBox = new THREE.Box3().setFromObject(model);
+          const center = boundingBox.getCenter(new THREE.Vector3());
+          const size = boundingBox.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z);
+          const fov = camera.fov * (Math.PI / 180);
+          const cameraDistance = maxDim / (2 * Math.tan(fov / 2));
+          
+          camera.position.copy(center).add(new THREE.Vector3(1, 0.5, 1).normalize().multiplyScalar(cameraDistance * 1.5));
+          viewer.controls.target.copy(center);
+        }
+      });
     }
-  });
+  }
   
   return { 
     tooltip, 
@@ -321,12 +328,12 @@ function hideAllOnclickTooltips() {
 }
 
 const CAMERA_LIMITS = {
-  MIN_ZOOM: 5,
-  MAX_ZOOM: 10,
+  MIN_ZOOM: 2,
+  MAX_ZOOM: 6,
   MIN_POLAR: 10,
   MAX_POLAR: 170,
   MIN_HEIGHT: 1,
-  TARGET: new THREE.Vector3(0, 0, 0)
+  TARGET: new THREE.Vector3(0, 1, 0)
 };
 
 function clampCamera(camera) {
@@ -674,7 +681,7 @@ fetch('scene.json')
     viewer = new GaussianSplats3D.Viewer({
       cameraUp: [0, 1, 0],
       initialCameraPosition: [1.54163, 2.68515, -6.37228],
-      initialCameraLookAt: [0.45622, 1.95338, 1.51278],
+      initialCameraLookAt: [0, 0, 0],
       sphericalHarmonicsDegree: 2,
       useFrustumCulling: true,
       halfPrecisionCovariancesOnGPU: true,

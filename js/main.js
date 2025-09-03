@@ -18,7 +18,7 @@ const camera = new THREE.PerspectiveCamera(
 );
 camera.position.fromArray([1.54163, 2.68515, -6.37228]);
 camera.up.fromArray([0, 1, 0]);
-camera.lookAt(new THREE.Vector3(0.45622, 1.95338, 1.51278));
+camera.lookAt(new THREE.Vector3(0, 0, 0));
 
 const renderDim = new THREE.Vector2();
 const tmpVec3 = new THREE.Vector3();
@@ -28,7 +28,7 @@ const viewer = new GaussianSplats3D.Viewer({
   camera: camera,
   cameraUp: [0, 1, 0],
   initialCameraPosition: [1.54163, 2.68515, -6.37228],
-  initialCameraLookAt: [0.45622, 1.95338, 1.51278],
+  initialCameraLookAt: [0, 0, 0],
   sphericalHarmonicsDegree: 2,
   useFrustumCulling: true,
   frustumCullingDebug: false,
@@ -38,7 +38,7 @@ const viewer = new GaussianSplats3D.Viewer({
   showLoadingUI: false
 });
 
-const splatPath = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/SignatureGlobal/TwinTowerDXP/converted_file_spz.ksplat';
+const splatPath = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/SignatureGlobal/TwinTowerDXP/wasl_converted_file.ksplat';
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
@@ -79,12 +79,12 @@ function generateModelId() {
 
 
 const CAMERA_LIMITS = {
-  MIN_ZOOM: 5,
-  MAX_ZOOM: 10,
+  MIN_ZOOM: 2,
+  MAX_ZOOM: 6,
   MIN_POLAR: 10,
   MAX_POLAR: 170,
-  MIN_HEIGHT: 1, // Minimum height above ground (y-axis)
-  TARGET: new THREE.Vector3(0, 0, 0)
+  MIN_HEIGHT: 0, // Minimum height above ground (y-axis)
+  TARGET: new THREE.Vector3(0, 1, 0)
 };
 function clampCamera(camera) {
   // Prevent camera from going below ground plane (y < MIN_HEIGHT)
@@ -164,7 +164,7 @@ function createSkybox(textureUrl) {
   loader.load(textureUrl, (texture) => {
     texture.mapping = THREE.EquirectangularReflectionMapping;
 
-    const skyboxGeometry = new THREE.SphereGeometry(100, 32, 32);
+    const skyboxGeometry = new THREE.SphereGeometry(30, 32, 32);
     const skyboxMaterial = new THREE.MeshBasicMaterial({
       map: texture,
       side: THREE.BackSide,
@@ -681,21 +681,45 @@ function updateTooltipContent(model) {
   const name = modelData?.name || model.name || model.type;
   const description = modelData?.description || `Description for ${name}`;
   const buttonText = modelData?.buttonText || "Select";
+  const showButton = modelData?.showTooltipButton !== false;
 
-  tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p>`;
+  tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p>${showButton ? `<button>${buttonText}</button>` : ''}`;
 
+  // Set pointer events based on button visibility
+  tooltip.style.pointerEvents = showButton ? 'auto' : 'none';
 
-  tooltip.querySelector('button').addEventListener('click', () => {
-    selectModel(model);
-  });
+  // Only add event listener if button exists
+  if (showButton) {
+    const button = tooltip.querySelector('button');
+    if (button) {
+      button.addEventListener('click', () => {
+        selectModel(model);
+      });
+    }
+  }
 }
 
 function createModelItem(m, index) {
   const item = document.createElement('div');
   item.className = 'model-item';
   item.dataset.index = index;
+  const showButtonToggle = document.createElement('div');
+  showButtonToggle.className = 'tooltip-toggle';
+  showButtonToggle.style.marginTop = '6px';
+  const showButtonCheckbox = document.createElement('input');
+  showButtonCheckbox.type = 'checkbox';
+  showButtonCheckbox.checked = m.showTooltipButton !== false;
+  showButtonCheckbox.addEventListener('change', (e) => {
+    m.showTooltipButton = e.target.checked;
+    updateTooltipContent(m.object);
+  });
+  const showButtonLabel = document.createElement('span');
+  showButtonLabel.textContent = 'Show Button';
+  showButtonToggle.appendChild(showButtonCheckbox);
+  showButtonToggle.appendChild(showButtonLabel);
 
   const left = document.createElement('div');
+  left.appendChild(showButtonToggle);
   left.style.display = 'flex';
   left.style.flexDirection = 'column';
   left.style.gap = '2px';
@@ -1013,15 +1037,25 @@ function createTooltipForModel(model) {
   const name = modelData?.name || model.name || model.type;
   const description = modelData?.description || `Description for ${name}`;
   const buttonText = modelData?.buttonText || "Select";
+  const showButton = modelData?.showTooltipButton !== false;
 
-  tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p><button style="display: none">${buttonText}</button>`;
+  tooltip.innerHTML = `<h4>${name}</h4><p>${description}</p>${showButton ? `<button>${buttonText}</button>` : ''}`;
+
+  // Set pointer events based on button visibility
+  tooltip.style.pointerEvents = showButton ? 'auto' : 'none';
 
   tooltip.style.display = 'none';
   document.body.appendChild(tooltip);
 
-  tooltip.querySelector('button').addEventListener('click', () => {
-    selectModel(model);
-  });
+  // Only add event listener if button exists
+  if (showButton) {
+    const button = tooltip.querySelector('button');
+    if (button) {
+      button.addEventListener('click', () => {
+        selectModel(model);
+      });
+    }
+  }
 
   return {
     el: tooltip,
@@ -1071,7 +1105,7 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   mixers.forEach(m => m.update(delta));
-  // clampCamera(viewer.camera);
+  clampCamera(viewer.camera);
   if (skybox && viewer.camera) {
     skybox.position.copy(viewer.camera.position);
   }
@@ -1135,7 +1169,7 @@ document.getElementById('addSelectableBtn').addEventListener('click', () => {
   cube.position.set(0, 0.5, 0);
 
   viewer.threeScene.add(cube);
-  models.push({ id: generateModelId(), name: cube.name, object: cube, showTooltip: true, tooltipTrigger: 'onclick' });
+  models.push({ id: generateModelId(), name: cube.name, object: cube, showTooltip: true, tooltipTrigger: 'onclick', showTooltipButton: true });
   refreshSidebarList();
   selectModel(cube);
 });
@@ -1208,7 +1242,8 @@ document.getElementById('glbFileInput').addEventListener('change', (e) => {
         groupId: group.id,
         isGLBPart: true,
         originalMatrix: meshData.originalMatrix,
-        originalMaterial: meshData.originalMaterial
+        originalMaterial: meshData.originalMaterial,
+        showTooltipButton: true
       });
     });
 
@@ -1263,7 +1298,7 @@ document.getElementById('resetSceneBtn').addEventListener('click', () => {
   );
   box.name = 'Box';
   viewer.threeScene.add(box);
-  models.push({ id: generateModelId(), name: 'Box', object: box, showTooltip: true });
+  models.push({ id: generateModelId(), name: 'Box', object: box, showTooltip: true, showTooltipButton: true });
   refreshSidebarList();
 });
 
@@ -1292,7 +1327,7 @@ viewer.addSplatScene(splatPath, { progressiveLoad: false, useFrustumCulling: tru
   );
   box.name = 'Box';
   scene.add(box);
-  models.push({ id: generateModelId(), name: 'Box', object: box, showTooltip: true });
+  models.push({ id: generateModelId(), name: 'Box', object: box, showTooltip: true, showTooltipButton: true });
 
   gui = createGUI(box);
   selectedModel = box;

@@ -3,16 +3,16 @@ import GUI from 'lil-gui';
 
 export function createGUI(obj, isGroup = false, groupObjects = []) {
   const gui = new GUI();
-  
+
   if (isGroup && groupObjects.length > 0) {
     // GUI for group
     const groupParams = {
       name: obj.name || 'Group',
-      posX: obj.position.x, 
-      posY: obj.position.y, 
+      posX: obj.position.x,
+      posY: obj.position.y,
       posZ: obj.position.z,
-      rotX: obj.rotation.x, 
-      rotY: obj.rotation.y, 
+      rotX: obj.rotation.x,
+      rotY: obj.rotation.y,
       rotZ: obj.rotation.z,
       scale: obj.scale.x,
       visible: obj.visible
@@ -120,11 +120,12 @@ export function createGUI(obj, isGroup = false, groupObjects = []) {
     const params = {
       name: obj.name || 'Object',
       color: obj.material?.color ? '#' + obj.material.color.getHexString() : '#ffffff',
-      posX: obj.position.x, 
-      posY: obj.position.y, 
+      alpha: obj.material?.opacity ?? 1,
+      posX: obj.position.x,
+      posY: obj.position.y,
       posZ: obj.position.z,
-      rotX: obj.rotation.x, 
-      rotY: obj.rotation.y, 
+      rotX: obj.rotation.x,
+      rotY: obj.rotation.y,
       rotZ: obj.rotation.z,
       scale: obj.scale.x,
       visible: obj.visible,
@@ -136,10 +137,24 @@ export function createGUI(obj, isGroup = false, groupObjects = []) {
       obj.name = v;
     });
 
-    // Color (if material exists)
     if (obj.material?.color) {
+      // Color picker
       gui.addColor(params, 'color').name('Color').onChange(v => {
         obj.material.color.set(v);
+      });
+
+      // Alpha (opacity) slider
+      gui.add(params, 'alpha', 0, 1, 0.01).name('Alpha').onChange(v => {
+        obj.material.transparent = true;   // 👈 must be true for opacity to work
+        obj.material.opacity = v;
+
+        // If you want blending (for glass-like look)
+        if (v < 1) {
+          obj.material.depthWrite = false; // avoids z-fighting with transparent surfaces
+        } else {
+          obj.material.depthWrite = true;  // reset when fully opaque
+        }
+        obj.material.needsUpdate = true;   // force refresh
       });
     }
 
