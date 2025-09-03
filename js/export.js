@@ -242,11 +242,11 @@ function createTooltipForModel(model, modelData) {
   tooltip.className = 'hp-tooltip';
   
   const name = modelData?.name || model.name || model.type;
-  const description = modelData?.description || \`Description for ${name}\`;
-  const buttonText = modelData?.buttonText || "Select";
+  const description = modelData?.description || 'Description for ' + name;
+  const buttonText = modelData?.buttonText || 'Select';
   const showButton = modelData?.showTooltipButton !== false;
   
-  // Use string concatenation instead of template literals
+  // Use string concatenation with proper escaping
   tooltip.innerHTML = '<h4>' + name + '</h4><p>' + description + '</p>' + (showButton ? '<button>' + buttonText + '</button>' : '');
   
   // Set pointer events based on button visibility
@@ -265,21 +265,16 @@ function createTooltipForModel(model, modelData) {
   if (showButton) {
     const button = tooltip.querySelector('button');
     if (button) {
-      button.addEventListener('click', () => {
+      button.addEventListener('click', function(e) {
+        // Prevent the click from propagating to the canvas
+        e.stopPropagation();
+        e.preventDefault();
+        
         console.log('Selected model:', name);
+        
+        // Execute script on tooltip button click
         executeModelScript(model, modelData);
         
-        if (camera && viewer && viewer.controls) {
-          const boundingBox = new THREE.Box3().setFromObject(model);
-          const center = boundingBox.getCenter(new THREE.Vector3());
-          const size = boundingBox.getSize(new THREE.Vector3());
-          const maxDim = Math.max(size.x, size.y, size.z);
-          const fov = camera.fov * (Math.PI / 180);
-          const cameraDistance = maxDim / (2 * Math.tan(fov / 2));
-          
-          camera.position.copy(center).add(new THREE.Vector3(1, 0.5, 1).normalize().multiplyScalar(cameraDistance * 1.5));
-          viewer.controls.target.copy(center);
-        }
       });
     }
   }
@@ -680,7 +675,7 @@ fetch('scene.json')
     
     viewer = new GaussianSplats3D.Viewer({
       cameraUp: [0, 1, 0],
-      initialCameraPosition: [1.54163, 2.68515, -6.37228],
+      initialCameraPosition: [0,1,1],
       initialCameraLookAt: [0, 0, 0],
       sphericalHarmonicsDegree: 2,
       useFrustumCulling: true,
@@ -804,11 +799,26 @@ fetch('scene.json')
             hideAllOnclickTooltips();
           }
         });
-        document.addEventListener('mousedown', (e) => {
-          if (!canvas.contains(e.target)) {
-            hideAllOnclickTooltips();
-          }
-        });
+document.addEventListener('mousedown', function(e) {
+  // Don\\'t hide tooltips if clicking on a tooltip or its children
+  if (e.target.closest('.hp-tooltip')) {
+    return;
+  }
+
+  // Don\\'t hide tooltips if clicking in the sidebar
+  if (e.target.closest('.sidebar-section') || e.target.closest('.model-item')) {
+    return;
+  }
+
+  if (e.target.closest('canvas')) {
+    setTimeout(function() {
+      hideAllOnclickTooltips();
+    }, 10);
+    return;
+  }
+  
+  hideAllOnclickTooltips();
+});
       }
 
       animate();
@@ -866,7 +876,7 @@ window.addEventListener('unhandledrejection', (e) => {
     downloadFile('main.js', js, 'text/javascript');
     downloadFile('scene.json', json, 'application/json');
     downloadFile('index.html', html, 'text/html');
-    
+
     const readme = `# Exported Scene
     
     Place your GLB model files in the 'assets' folder alongside these files.
@@ -879,7 +889,7 @@ window.addEventListener('unhandledrejection', (e) => {
 - assets/ (containing your GLB model files)
 
 Serve these files through a web server for proper loading.`;
-downloadFile('readme.md', readme, 'text/markdown');
+    downloadFile('readme.md', readme, 'text/markdown');
 
   } catch (error) {
     console.error('Error in export process:', error);

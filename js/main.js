@@ -16,7 +16,7 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   1000
 );
-camera.position.fromArray([1.54163, 2.68515, -6.37228]);
+camera.position.fromArray([0, 1, 1]);
 camera.up.fromArray([0, 1, 0]);
 camera.lookAt(new THREE.Vector3(0, 0, 0));
 
@@ -27,7 +27,7 @@ let canvasEl = null;
 const viewer = new GaussianSplats3D.Viewer({
   camera: camera,
   cameraUp: [0, 1, 0],
-  initialCameraPosition: [1.54163, 2.68515, -6.37228],
+  // initialCameraPosition: [0, 0, 1],
   initialCameraLookAt: [0, 0, 0],
   sphericalHarmonicsDegree: 2,
   useFrustumCulling: true,
@@ -517,7 +517,13 @@ function onMouseDown(event) {
           }
         }
       }
-
+      if (modelData.script && modelData.script.trim() !== "") {
+        try {
+          new Function(modelData.script).call(modelData.object);
+        } catch (err) {
+          console.error("Script error for model:", modelData.id, err);
+        }
+      }
       selectModel(modelData.object);
     }
   } else {
@@ -692,7 +698,23 @@ function updateTooltipContent(model) {
   if (showButton) {
     const button = tooltip.querySelector('button');
     if (button) {
-      button.addEventListener('click', () => {
+      // Remove any existing event listeners first
+      button.replaceWith(button.cloneNode(true));
+      const newButton = tooltip.querySelector('button');
+
+      newButton.addEventListener('click', (e) => {
+        // Prevent the click from propagating to the canvas
+        e.stopPropagation();
+        e.preventDefault();
+
+        // Run script on tooltip button click
+        if (modelData && modelData.script && modelData.script.trim() !== "") {
+          try {
+            new Function(modelData.script).call(modelData.object);
+          } catch (err) {
+            console.error("Script error for model:", modelData.id, err);
+          }
+        }
         selectModel(model);
       });
     }
@@ -1051,7 +1073,19 @@ function createTooltipForModel(model) {
   if (showButton) {
     const button = tooltip.querySelector('button');
     if (button) {
-      button.addEventListener('click', () => {
+      button.addEventListener('click', (e) => {
+        // Prevent the click from propagating to the canvas
+        e.stopPropagation();
+        e.preventDefault();
+
+        // Run script on tooltip button click
+        if (modelData && modelData.script && modelData.script.trim() !== "") {
+          try {
+            new Function(modelData.script).call(modelData.object);
+          } catch (err) {
+            console.error("Script error for model:", modelData.id, err);
+          }
+        }
         selectModel(model);
       });
     }
@@ -1390,13 +1424,22 @@ function onMouseUp(event) {
 
 
 document.addEventListener('mousedown', (e) => {
+  // Don't hide tooltips if clicking on a tooltip or its children
+  if (e.target.closest('.hp-tooltip')) {
+    return;
+  }
 
-  if (e.target.closest('.hp-tooltip') || e.target.closest('.sidebar-section') || e.target.closest('.model-item')) return;
+  // Don't hide tooltips if clicking in the sidebar
+  if (e.target.closest('.sidebar-section') || e.target.closest('.model-item')) {
+    return;
+  }
+
   if (e.target.closest('canvas')) {
     setTimeout(() => {
       hideAllOnclickTooltips();
     }, 10);
     return;
   }
+  
   hideAllOnclickTooltips();
 });
