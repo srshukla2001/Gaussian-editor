@@ -377,4 +377,18 @@ styleTag.innerHTML = `
     border-bottom: none;
     margin-bottom: 0;
   }
+
+  .hp-bottombar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 20px;
+    background: var(--header-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: var(--muted);
+  }
 `;

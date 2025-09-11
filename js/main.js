@@ -7,7 +7,7 @@ import { exportScene } from './export.js';
 import { createGUI } from './gui.js';
 import { createTransformGizmo } from './gizmo.js';
 import { styleTag } from './styles.js'
-import { sidebar } from './sidebar.js';
+import { sidebar, BottomBar } from './sidebar.js';
 window.THREE = THREE;
 
 const camera = new THREE.PerspectiveCamera(
@@ -38,7 +38,7 @@ const viewer = new GaussianSplats3D.Viewer({
   showLoadingUI: false
 });
 
-const splatPath = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/SignatureGlobal/TwinTowerDXP/wasl_converted_file.ksplat';
+const splatPath = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/VirtualHomes/gs_3d_vista/gs_main_house_2.ply';
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
@@ -64,6 +64,7 @@ let lastHoveredModel = null;
 
 document.head.appendChild(styleTag);
 document.body.appendChild(sidebar);
+document.body.appendChild(BottomBar);
 
 const tooltip = document.createElement('div');
 tooltip.className = 'hp-tooltip';

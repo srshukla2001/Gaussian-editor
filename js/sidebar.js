@@ -79,3 +79,10 @@ sidebar.innerHTML = `
     <button id="resetSceneBtn" class="hp-btn">Reset</button>
   </div>
 `;
+export const BottomBar = document.createElement('div');
+BottomBar.className = 'hp-bottombar';
+BottomBar.innerHTML = `
+  <div class="hp-header2">
+  hello
+    <div>
+    `;
