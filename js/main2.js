@@ -37,7 +37,7 @@ const viewer = new GaussianSplats3D.Viewer({
   showLoadingUI: false
 });
 
-const BASE_CHUNK_URL = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/VirtualHomes/gs_3d_vista/chunks/';
+const BASE_CHUNK_URL = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/VirtualHomes/gs_3d_vista/chunks_wasl/';
 let splatChunks = [];
 let loadedChunkScenes = [];
 // function generateChunkUrls(gridSize = 5) {
