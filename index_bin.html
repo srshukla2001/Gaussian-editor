@@ -1,0 +1,285 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>BIN Debug Viewer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #111;
+            color: #ddd;
+            font-family: monospace;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.45);
+            border-radius: 6px;
+            z-index: 10;
+            font-size: 13px;
+        }
+
+        #overlay b {
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="overlay">
+        <div id="status">Initializing...</div>
+        <div id="stats"></div>
+    </div>
+
+    <script type="module">
+        import * as GaussianSplats3D from './lib/gaussian-splats-3d.module.js';
+        import * as THREE from './lib/three.module.js';
+
+        console.log("✅ Three.js loaded:", THREE.REVISION);
+        // ========== USER CONFIGURE ==========
+        // Put a small node URL OR use the synthetic fallback if fetch fails/CORS blocks
+        const BIN_URL = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/VirtualHomes/gs_3d_vista/octree_bins/node_root_0_0.bin' // e.g. 'https://your-bucket/.../node_root.bin'
+        const POINT_COUNT = 164 // set correct count for that .bin (if unknown use small)
+        // ====================================
+
+        const statusEl = document.getElementById('status');
+        const statsEl = document.getElementById('stats');
+
+        function setStatus(txt) { statusEl.innerHTML = `<b>Status</b>: ${txt}`; }
+        function setStats(txt) { statsEl.innerHTML = txt; console.log(txt); }
+
+        // Basic Three.js setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
+        const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 10000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        renderer.setSize(innerWidth, innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // Helpers
+        scene.add(new THREE.AxesHelper(5));
+        const grid = new THREE.GridHelper(200, 10, 0x222222, 0x111111);
+        scene.add(grid);
+
+        // Render loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = innerWidth / innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(innerWidth, innerHeight);
+        });
+
+        // Utility: create synthetic data (for testing rendering pipeline only)
+        function makeSynthetic(count = 1000) {
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+            for (let i = 0; i < count; i++) {
+                // put points inside [-1,1] cube
+                positions[i * 3 + 0] = (Math.random() - 0.5) * 2;
+                positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 2;
+                colors[i * 3 + 0] = Math.random();
+                colors[i * 3 + 1] = Math.random();
+                colors[i * 3 + 2] = Math.random();
+            }
+            return { positions, colors };
+        }
+
+        // Add points to scene (auto-scale & auto-fit camera)
+        function addPointsToScene(positions, colors, pointSize = 6) {
+            // Normalize scaling: if points are in 0..1, expand; if tiny, scale up
+            const posAttr = positions;
+            const count = posAttr.length / 3;
+
+            // Compute bounding box
+            const box = new THREE.Box3();
+            const vec = new THREE.Vector3();
+            for (let i = 0; i < count; i++) {
+                vec.set(posAttr[i * 3 + 0], posAttr[i * 3 + 1], posAttr[i * 3 + 2]);
+                box.expandByPoint(vec);
+            }
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+
+            // If points are inside [0..1] or very small, scale them up a bit
+            if (maxDim < 2.0) {
+                const scale = 100; // heuristic
+                for (let i = 0; i < count; i++) {
+                    posAttr[i * 3 + 0] *= scale;
+                    posAttr[i * 3 + 1] *= scale;
+                    posAttr[i * 3 + 2] *= scale;
+                }
+                box.expandByScalar(1e6); // recompute not necessary
+            }
+
+            // Build geometry
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(posAttr, 3));
+            if (colors && colors.length === count * 3) {
+                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            }
+
+            // Material: use vertex colors if present, otherwise fallback red
+            const material = new THREE.PointsMaterial({
+                size: pointSize,
+                sizeAttenuation: false, // keep constant pixel size for debugging
+                vertexColors: !!(colors && colors.length === count * 3),
+                color: (colors && colors.length === count * 3) ? 0xffffff : 0xff0000,
+                transparent: true,
+                opacity: 1.0,
+                depthWrite: true
+            });
+
+            const points = new THREE.Points(geometry, material);
+            points.name = "debugPoints";
+            scene.add(points);
+
+            // Fit camera
+            const finalBox = new THREE.Box3().setFromObject(points);
+            const finalCenter = finalBox.getCenter(new THREE.Vector3());
+            const finalSize = finalBox.getSize(new THREE.Vector3()).length();
+            camera.position.copy(finalCenter.clone().add(new THREE.Vector3(0, 0, finalSize * 1.5 + 50)));
+            camera.lookAt(finalCenter);
+            camera.near = 0.1;
+            camera.far = Math.max(10000, finalSize * 10);
+            camera.updateProjectionMatrix();
+
+            setStatus(`Rendered ${count} points. bbox center ${finalCenter.toArray().map(n => n.toFixed(2))}, size ${finalSize.toFixed(2)}`);
+            setStats(`bbox: ${finalBox.min.toArray().map(n => n.toFixed(3))} — ${finalBox.max.toArray().map(n => n.toFixed(3))}`);
+            console.log("Added points:", points);
+        }
+
+        // Try to detect stride and parse buffer
+        function detectStrideAndParse(buffer, count) {
+            const byteLength = buffer.byteLength;
+            setStats(`buffer.byteLength = ${byteLength} bytes; expected points = ${count}`);
+            console.log("buffer.byteLength:", byteLength);
+
+            // If count is zero or missing, try to guess it from common strides
+            if (!count || count <= 0) {
+                setStatus("Point count unknown — falling back to heuristics");
+                // try common strides
+                const common = [16, 20, 24, 28, 32, 44, 48, 64];
+                for (const s of common) {
+                    if (byteLength % s === 0) {
+                        const guessed = byteLength / s;
+                        console.log(`Guessed stride ${s} bytes/point -> count ${guessed}`);
+                        // ask user to set correct count if this guessed is too big
+                    }
+                }
+            }
+
+            // Check ideal stride = byteLength / count
+            const floatStride = byteLength / count;
+            const intStride = Math.floor(floatStride);
+            if (Math.abs(floatStride - intStride) < 1e-6) {
+                const stride = intStride;
+                console.log("Detected stride:", stride, "bytes/point");
+                return parseWithStride(buffer, count, stride);
+            } else {
+                // not integer: show diagnostics and try common fallback
+                console.warn("byteLength / count is not integer:", floatStride);
+                // try to auto-find a stride that evenly divides the buffer
+                for (let s = 8; s <= 128; s += 4) {
+                    if (byteLength % s === 0) {
+                        const guessedCount = byteLength / s;
+                        if (guessedCount <= 5_000_000) {
+                            console.log("Trying guessed stride", s, "-> count", guessedCount);
+                            // If guessedCount matches supplied count, great. else return parse attempt anyway.
+                            // We'll try using the provided count first if it makes sense
+                            if (guessedCount === count) {
+                                return parseWithStride(buffer, count, s);
+                            }
+                        }
+                    }
+                }
+                // fallback to 16 bytes/point parse
+                console.warn("Unable to detect exact stride. Falling back to 16 bytes/point");
+                return parseWithStride(buffer, count, 16);
+            }
+        }
+
+        function parseWithStride(buffer, count, stride) {
+            const dv = new DataView(buffer);
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            // We assume:
+            // bytes 0..11 : float32 x,y,z
+            // next bytes : maybe r,g,b,a as uint8 (if stride >= 16)
+            // if stride larger than 16 we will log the extra bytes for inspection
+            for (let i = 0; i < count; i++) {
+                const base = i * stride;
+                // guard if buffer smaller than expected
+                if (base + 12 > buffer.byteLength) { console.warn("Out of range read for position", i, base); break; }
+                positions[i * 3 + 0] = dv.getFloat32(base + 0, true);
+                positions[i * 3 + 1] = dv.getFloat32(base + 4, true);
+                positions[i * 3 + 2] = dv.getFloat32(base + 8, true);
+
+                if (stride >= 16 && base + 15 < buffer.byteLength) {
+                    const r = dv.getUint8(base + 12);
+                    const g = dv.getUint8(base + 13);
+                    const b = dv.getUint8(base + 14);
+                    // const a = dv.getUint8(base + 15);
+                    colors[i * 3 + 0] = r / 255;
+                    colors[i * 3 + 1] = g / 255;
+                    colors[i * 3 + 2] = b / 255;
+                } else {
+                    // no color bytes available: default white
+                    colors[i * 3 + 0] = 1.0;
+                    colors[i * 3 + 1] = 1.0;
+                    colors[i * 3 + 2] = 1.0;
+                }
+            }
+
+            // Log first few values for debug
+            console.log("Positions sample:", positions.slice(0, 9));
+            console.log("Colors sample:", colors.slice(0, 9));
+            return { positions, colors, stride };
+        }
+
+        async function fetchAndRender() {
+            try {
+                setStatus("Fetching binary...");
+                if (!BIN_URL) {
+                    throw new Error("No BIN_URL provided — using synthetic data");
+                }
+                const res = await fetch(BIN_URL);
+                if (!res.ok) throw new Error("Fetch failed: " + res.status);
+                const buffer = await res.arrayBuffer();
+                setStatus("Parsing binary...");
+                const parsed = detectStrideAndParse(buffer, POINT_COUNT);
+
+                if (!parsed) throw new Error("Parsing failed");
+                setStatus(`Parsed stride=${parsed.stride} bytes/pt — adding to scene`);
+                addPointsToScene(parsed.positions, parsed.colors, 6);
+            } catch (err) {
+                console.warn("Fetch/parse failed:", err);
+                setStatus("Fetch/parse failed — using synthetic fallback");
+                const s = makeSynthetic(2000);
+                addPointsToScene(s.positions, s.colors, 4);
+            }
+        }
+
+        // start
+        fetchAndRender();
+    </script>
+</body>
+
+</html>
