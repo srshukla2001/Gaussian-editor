@@ -37,7 +37,7 @@ const viewer = new GaussianSplats3D.Viewer({
   sortEnable: true,
   showLoadingUI: false
 });
-viewer.renderer.setPixelRatio(0.2);
+viewer.renderer.setPixelRatio(1);
 const splatPath = 'https://virtual-homes.s3.ap-south-1.amazonaws.com/VirtualHomes/gs_3d_vista/converted_file.ksplat';
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
